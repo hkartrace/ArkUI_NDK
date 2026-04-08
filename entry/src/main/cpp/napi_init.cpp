@@ -16,10 +16,17 @@ static napi_value CreateNativeRoot(napi_env env, napi_callback_info info) {
     return result;
 }
 
+static napi_value DestroyNativeRoot(napi_env env, napi_callback_info info) {
+    napi_value result = nullptr;
+    napi_get_undefined(env, &result);
+    return result;
+}
+
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
     napi_property_descriptor desc[] = {
-        {"createNativeRoot", nullptr, CreateNativeRoot, nullptr, nullptr, nullptr, napi_default, nullptr}
+        {"createNativeRoot", nullptr, CreateNativeRoot, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"destroyNativeRoot", nullptr, DestroyNativeRoot, nullptr, nullptr, nullptr, napi_default, nullptr}
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

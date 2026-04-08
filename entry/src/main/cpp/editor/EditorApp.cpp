@@ -24,67 +24,92 @@ void EditorApp::CreateSampleTree() {
 
     auto nodeApi = nodeFactory_.GetApi();
 
-    ArkUI_NodeHandle list = nodeApi->createNode(ARKUI_NODE_LIST);
-    if (!list) {
-        OH_LOG_ERROR(LOG_APP, "Failed to create List");
+    ArkUI_NodeHandle rootCol = nodeApi->createNode(ARKUI_NODE_COLUMN);
+    if (!rootCol) {
+        OH_LOG_ERROR(LOG_APP, "Failed to create root Column");
         return;
     }
-    rootNdkNode_ = list;
+    rootNdkNode_ = rootCol;
 
-    ArkUI_NumberValue pctW = {.f32 = 100.0f};
+    ArkUI_NumberValue pctW = {.f32 = 1.0f};
     ArkUI_AttributeItem pctWItem = {&pctW, 1};
-    nodeApi->setAttribute(list, NODE_WIDTH_PERCENT, &pctWItem);
+    nodeApi->setAttribute(rootCol, NODE_WIDTH_PERCENT, &pctWItem);
 
-    ArkUI_NumberValue pctH = {.f32 = 100.0f};
+    ArkUI_NumberValue pctH = {.f32 = 1.0f};
     ArkUI_AttributeItem pctHItem = {&pctH, 1};
-    nodeApi->setAttribute(list, NODE_HEIGHT_PERCENT, &pctHItem);
+    nodeApi->setAttribute(rootCol, NODE_HEIGHT_PERCENT, &pctHItem);
 
-    ArkUI_NumberValue scrollOn = {.i32 = ARKUI_SCROLL_BAR_DISPLAY_MODE_ON};
-    ArkUI_AttributeItem scrollItem = {&scrollOn, 1};
-    nodeApi->setAttribute(list, NODE_SCROLL_BAR_DISPLAY_MODE, &scrollItem);
+    ArkUI_NumberValue bgVal = {.u32 = 0xFFF5F5F5};
+    ArkUI_AttributeItem bgItem = {&bgVal, 1};
+    nodeApi->setAttribute(rootCol, NODE_BACKGROUND_COLOR, &bgItem);
 
-    for (int32_t i = 0; i < 30; ++i) {
-        ArkUI_NodeHandle listItem = nodeApi->createNode(ARKUI_NODE_LIST_ITEM);
+    ArkUI_NumberValue justifyVal = {.i32 = ARKUI_FLEX_ALIGNMENT_CENTER};
+    ArkUI_AttributeItem justifyItem = {&justifyVal, 1};
+    nodeApi->setAttribute(rootCol, NODE_COLUMN_JUSTIFY_CONTENT, &justifyItem);
 
-        ArkUI_NodeHandle textNode = nodeApi->createNode(ARKUI_NODE_TEXT);
+    ArkUI_NumberValue alignVal = {.i32 = ARKUI_HORIZONTAL_ALIGNMENT_CENTER};
+    ArkUI_AttributeItem alignItem = {&alignVal, 1};
+    nodeApi->setAttribute(rootCol, NODE_COLUMN_ALIGN_ITEMS, &alignItem);
 
-        std::string text = std::to_string(i);
-        ArkUI_AttributeItem contentItem = {nullptr, 0, text.c_str(), nullptr};
+    ArkUI_NumberValue padVal = {.f32 = 20.0f};
+    ArkUI_AttributeItem padItem = {&padVal, 1};
+    nodeApi->setAttribute(rootCol, NODE_PADDING, &padItem);
+
+    ArkUI_NodeHandle textNode = nodeApi->createNode(ARKUI_NODE_TEXT);
+    if (textNode) {
+        ArkUI_AttributeItem contentItem = {nullptr, 0, "Hello from ArkUI NDK!", nullptr};
         nodeApi->setAttribute(textNode, NODE_TEXT_CONTENT, &contentItem);
 
-        ArkUI_NumberValue fsVal = {.f32 = 16.0f};
+        ArkUI_NumberValue fsVal = {.f32 = 24.0f};
         ArkUI_AttributeItem fsItem = {&fsVal, 1};
         nodeApi->setAttribute(textNode, NODE_FONT_SIZE, &fsItem);
 
-        ArkUI_NumberValue fcVal = {.u32 = 0xFFff00ff};
+        ArkUI_NumberValue fcVal = {.u32 = 0xFF333333};
         ArkUI_AttributeItem fcItem = {&fcVal, 1};
         nodeApi->setAttribute(textNode, NODE_FONT_COLOR, &fcItem);
 
-        ArkUI_NumberValue pctW2 = {.f32 = 100.0f};
-        ArkUI_AttributeItem pctW2Item = {&pctW2, 1};
-        nodeApi->setAttribute(textNode, NODE_WIDTH_PERCENT, &pctW2Item);
+        ArkUI_NumberValue twVal = {.f32 = 300.0f};
+        ArkUI_AttributeItem twItem = {&twVal, 1};
+        nodeApi->setAttribute(textNode, NODE_WIDTH, &twItem);
 
-        ArkUI_NumberValue wVal = {.f32 = 300.0f};
-        ArkUI_AttributeItem wItem = {&wVal, 1};
-        nodeApi->setAttribute(textNode, NODE_WIDTH, &wItem);
+        ArkUI_NumberValue thVal = {.f32 = 60.0f};
+        ArkUI_AttributeItem thItem = {&thVal, 1};
+        nodeApi->setAttribute(textNode, NODE_HEIGHT, &thItem);
 
-        ArkUI_NumberValue hVal = {.f32 = 100.0f};
-        ArkUI_AttributeItem hItem = {&hVal, 1};
-        nodeApi->setAttribute(textNode, NODE_HEIGHT, &hItem);
+        ArkUI_NumberValue tbgVal = {.u32 = 0xFFE0E0E0};
+        ArkUI_AttributeItem tbgItem = {&tbgVal, 1};
+        nodeApi->setAttribute(textNode, NODE_BACKGROUND_COLOR, &tbgItem);
 
-        ArkUI_NumberValue bgVal = {.u32 = 0xFFfffacd};
-        ArkUI_AttributeItem bgItem = {&bgVal, 1};
-        nodeApi->setAttribute(textNode, NODE_BACKGROUND_COLOR, &bgItem);
+        ArkUI_NumberValue alignCenter = {.i32 = ARKUI_TEXT_ALIGNMENT_CENTER};
+        ArkUI_AttributeItem alignCenterItem = {&alignCenter, 1};
+        nodeApi->setAttribute(textNode, NODE_TEXT_ALIGN, &alignCenterItem);
 
-        ArkUI_NumberValue alignVal = {.i32 = ARKUI_TEXT_ALIGNMENT_CENTER};
-        ArkUI_AttributeItem alignItem = {&alignVal, 1};
-        nodeApi->setAttribute(textNode, NODE_TEXT_ALIGN, &alignItem);
-
-        nodeApi->addChild(listItem, textNode);
-        nodeApi->addChild(list, listItem);
+        nodeApi->addChild(rootCol, textNode);
+        OH_LOG_INFO(LOG_APP, "Text node added");
     }
 
-    OH_ArkUI_NodeContent_AddNode(contentHandle_, list);
+    ArkUI_NodeHandle btnNode = nodeApi->createNode(ARKUI_NODE_BUTTON);
+    if (btnNode) {
+        ArkUI_AttributeItem labelItem = {nullptr, 0, "Click Me", nullptr};
+        nodeApi->setAttribute(btnNode, NODE_BUTTON_LABEL, &labelItem);
+
+        ArkUI_NumberValue btnBg = {.u32 = 0xFF007DFF};
+        ArkUI_AttributeItem btnBgItem = {&btnBg, 1};
+        nodeApi->setAttribute(btnNode, NODE_BACKGROUND_COLOR, &btnBgItem);
+
+        ArkUI_NumberValue bwVal = {.f32 = 200.0f};
+        ArkUI_AttributeItem bwItem = {&bwVal, 1};
+        nodeApi->setAttribute(btnNode, NODE_WIDTH, &bwItem);
+
+        ArkUI_NumberValue bhVal = {.f32 = 50.0f};
+        ArkUI_AttributeItem bhItem = {&bhVal, 1};
+        nodeApi->setAttribute(btnNode, NODE_HEIGHT, &bhItem);
+
+        nodeApi->addChild(rootCol, btnNode);
+        OH_LOG_INFO(LOG_APP, "Button node added");
+    }
+
+    OH_ArkUI_NodeContent_AddNode(contentHandle_, rootCol);
 
     OH_LOG_INFO(LOG_APP, "Sample tree created");
 }
