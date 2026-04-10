@@ -1,0 +1,5 @@
+EXPORTS
+    napi_module_register
+    napi_get_cb_info
+    napi_get_undefined
+    napi_define_properties

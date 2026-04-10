@@ -1,0 +1,3817 @@
+diff --git a/build/ohos/sdk/ohos_sdk_description_std.json b/build/ohos/sdk/ohos_sdk_description_std.json
+index 47d84877..6b05fc49 100644
+--- a/build/ohos/sdk/ohos_sdk_description_std.json
++++ b/build/ohos/sdk/ohos_sdk_description_std.json
+@@ -1217,7 +1217,8 @@
+         "module_label": "//foundation/ability/ability_runtime/frameworks/simulator:copy_ability_simulator",
+         "target_os": [
+             "windows",
+-            "darwin"
++            "darwin",
++            "linux"
+         ]
+     },
+     {
+diff --git a/foundation/ability/ability_runtime/frameworks/ets/ani/native_constructor/context_native_constructor.cpp b/foundation/ability/ability_runtime/frameworks/ets/ani/native_constructor/context_native_constructor.cpp
+index 53c0aabae4..95bd673037 100644
+--- a/foundation/ability/ability_runtime/frameworks/ets/ani/native_constructor/context_native_constructor.cpp
++++ b/foundation/ability/ability_runtime/frameworks/ets/ani/native_constructor/context_native_constructor.cpp
+@@ -13,6 +13,7 @@
+  * limitations under the License.
+  */
+ #include <ani.h>
++#include <array>
+ #include "hilog_tag_wrapper.h"
+ 
+ namespace OHOS {
+diff --git a/foundation/ability/ability_runtime/frameworks/simulator/BUILD.gn b/foundation/ability/ability_runtime/frameworks/simulator/BUILD.gn
+index fe4510fae1..ef4dc70c41 100644
+--- a/foundation/ability/ability_runtime/frameworks/simulator/BUILD.gn
++++ b/foundation/ability/ability_runtime/frameworks/simulator/BUILD.gn
+@@ -16,8 +16,10 @@ import("//foundation/ability/ability_runtime/ability_runtime.gni")
+ 
+ if (is_mac) {
+   dylib_suffix = ".dylib"
+-} else {
++} else if (is_mingw) {
+   dylib_suffix = ".dll"
++} else if (is_linux) {
++  dylib_suffix = ".so"
+ }
+ 
+ not_needed("*", [ "dylib_suffix" ])
+diff --git a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/BUILD.gn b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/BUILD.gn
+index cbe9c17249..6adde5389d 100644
+--- a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/BUILD.gn
++++ b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/BUILD.gn
+@@ -14,6 +14,7 @@
+ import("//build/config/components/ace_engine/ace_gen_obj.gni")
+ import("//build/ohos.gni")
+ import("//foundation/ability/ability_runtime/ability_runtime.gni")
++import("//foundation/communication/ipc/config.gni")
+ 
+ config("ability_simulator_public_config") {
+   include_dirs = [ "include" ]
+@@ -21,7 +22,7 @@ config("ability_simulator_public_config") {
+ }
+ 
+ ohos_shared_library("ability_simulator_inner") {
+-  if (is_mingw || is_mac) {
++  if (is_mingw || is_mac || is_linux) {
+     defines = []
+     if (is_mingw) {
+       defines += [
+@@ -45,6 +46,7 @@ ohos_shared_library("ability_simulator_inner") {
+       "${ability_runtime_innerkits_path}/error_utils/include",
+       "${ability_runtime_innerkits_path}/runtime/include",
+       "${windowmanager_path}/previewer/include",
++      "${windowmanager_path}/previewer",
+       "${windowmanager_path}/previewer/mock",
+       "${windowmanager_path}/previewer/mock/transaction",
+       "${windowmanager_path}/previewer/mock/ui",
+@@ -52,8 +54,16 @@ ohos_shared_library("ability_simulator_inner") {
+       "${windowmanager_path}/interfaces/kits/napi/window_runtime/window_stage_napi",
+       "include/bundle_parser",
+       "${simulator_path}/napi_module/application",
++      "${resource_management_path}/interfaces/inner_api/include",
+     ]
+ 
++    if (is_linux) {
++      defines += [ "LINUX_PREVIEW" ]
++      defines += [ "WINDOW_PREVIEW" ]
++      defines += [ "LINUX_PLATFORM" ]
++      defines += [ "PREVIEW" ]
++    }
++
+     sources = [
+       "${ability_runtime_native_path}/ability/native/ability_business_error/ability_business_error.cpp",
+       "${ability_runtime_native_path}/runtime/js_module_searcher.cpp",
+@@ -121,8 +131,10 @@ ohos_shared_library("ability_simulator_inner") {
+ 
+     if (is_mingw) {
+       external_deps += [ "resource_management:win_resmgr" ]
+-    } else {
++    } else if (is_mac) {
+       external_deps += [ "resource_management:mac_resmgr" ]
++    } else if (is_linux) {
++      external_deps += [ "resource_management:linux_resmgr" ]
+     }
+   }
+ 
+@@ -133,7 +145,7 @@ ohos_shared_library("ability_simulator_inner") {
+ }
+ 
+ group("ability_simulator") {
+-  if (is_mingw || is_mac) {
++  if (is_mingw || is_mac || is_linux) {
+     public_deps = [ ":ability_simulator_inner" ]
+   }
+ }
+diff --git a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/include/bundle_parser/inner_bundle_info.h b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/include/bundle_parser/inner_bundle_info.h
+index 5a6c08cdbf..7d6389b7e8 100644
+--- a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/include/bundle_parser/inner_bundle_info.h
++++ b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/include/bundle_parser/inner_bundle_info.h
+@@ -24,6 +24,7 @@
+ #include "hap_module_info.h"
+ #include "json_util.h"
+ #include "nocopyable.h"
++#include <optional>
+ 
+ namespace OHOS {
+ namespace AppExecFwk {
+diff --git a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/bundle_parser/module_profile.cpp b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/bundle_parser/module_profile.cpp
+index 990f4c83e5..2afc208fa9 100644
+--- a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/bundle_parser/module_profile.cpp
++++ b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/bundle_parser/module_profile.cpp
+@@ -24,6 +24,7 @@
+ #include "common_profile.h"
+ #include "hilog_tag_wrapper.h"
+ #include "string_ex.h"
++#include <unordered_map>
+ 
+ namespace OHOS {
+ namespace AppExecFwk {
+diff --git a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/resource_manager_helper.cpp b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/resource_manager_helper.cpp
+index be3e889331..81771c841e 100644
+--- a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/resource_manager_helper.cpp
++++ b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/resource_manager_helper.cpp
+@@ -25,7 +25,7 @@ const std::string RESOURCES_FILE_NAME = "resources.index";
+ 
+ #if defined(WINDOWS_PLATFORM)
+ constexpr char DELIMITER[] = "\\";
+-#elif defined(MAC_PLATFORM)
++#elif defined(MAC_PLATFORM) || defined(LINUX_PLATFORM)
+ constexpr char DELIMITER[] = "/";
+ #else
+ #error "Unsupported platform"
+diff --git a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/simulator.cpp b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/simulator.cpp
+index 6f2a6154c3..d6b75490c7 100644
+--- a/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/simulator.cpp
++++ b/foundation/ability/ability_runtime/frameworks/simulator/ability_simulator/src/simulator.cpp
+@@ -72,6 +72,8 @@ const std::string DEPENDENCY_ALIAS = "dependencyAlias";
+ constexpr char ARK_DEBUGGER_LIB_PATH[] = "libark_inspector.dll";
+ #elif defined(MAC_PLATFORM)
+ constexpr char ARK_DEBUGGER_LIB_PATH[] = "libark_inspector.dylib";
++#elif defined(LINUX_PLATFORM)
++constexpr char ARK_DEBUGGER_LIB_PATH[] = "libark_inspector.so";
+ #else
+ #error "Unsupported platform"
+ #endif
+@@ -359,7 +361,6 @@ int64_t SimulatorImpl::StartAbility(
+     if (!ParseAbilityInfo(abilitySrcPath, abilityName)) {
+         return -1;
+     }
+-
+     CreateStageContext();
+     std::ifstream stream(options_.modulePath, std::ios::ate | std::ios::binary);
+     if (!stream.is_open()) {
+diff --git a/foundation/ability/ability_runtime/frameworks/simulator/build/ability_simulator.gni b/foundation/ability/ability_runtime/frameworks/simulator/build/ability_simulator.gni
+index 940d793c03..8422257691 100644
+--- a/foundation/ability/ability_runtime/frameworks/simulator/build/ability_simulator.gni
++++ b/foundation/ability/ability_runtime/frameworks/simulator/build/ability_simulator.gni
+@@ -29,7 +29,7 @@ template("gen_js_src_binary") {
+   gen_obj(target_name + "_js") {
+     input = invoker.js_source
+ 
+-    if (is_mac || is_mingw) {
++    if (is_mac || is_mingw || is_linux) {
+       output = target_out_dir + "/" + invoker.target_name + "_js.c"
+     } else {
+       output = target_out_dir + "/" + invoker.target_name + "_js.o"
+@@ -43,7 +43,7 @@ template("gen_js_src_binary") {
+         get_label_info(":gen_abc_" + invoker.target_name, "target_out_dir") +
+         "/" + get_path_info(invoker.js_source, "name") + ".abc"
+ 
+-    if (is_mac || is_mingw) {
++    if (is_mac || is_mingw || is_linux) {
+       output = target_out_dir + "/" + invoker.target_name + "_abc.c"
+     } else {
+       output = target_out_dir + "/" + invoker.target_name + "_abc.o"
+diff --git a/foundation/ability/ability_runtime/js_environment/interfaces/inner_api/source_map.h b/foundation/ability/ability_runtime/js_environment/interfaces/inner_api/source_map.h
+index 90cd345e2c..b10cab588d 100644
+--- a/foundation/ability/ability_runtime/js_environment/interfaces/inner_api/source_map.h
++++ b/foundation/ability/ability_runtime/js_environment/interfaces/inner_api/source_map.h
+@@ -18,7 +18,9 @@
+ 
+ #include <cstring>
+ #include <fstream>
++#include <functional>
+ #include <limits.h>
++#include <memory>
+ #include <mutex>
+ #include <unordered_map>
+ #include <utility>
+diff --git a/foundation/ability/ability_base/interfaces/kits/native/extractortool/include/file_path_utils.h b/foundation/ability/ability_base/interfaces/kits/native/extractortool/include/file_path_utils.h
+index 8b33e13..13f88bc 100644
+--- a/foundation/ability/ability_base/interfaces/kits/native/extractortool/include/file_path_utils.h
++++ b/foundation/ability/ability_base/interfaces/kits/native/extractortool/include/file_path_utils.h
+@@ -17,6 +17,7 @@
+ #define OHOS_ABILITY_BASE_FILE_PATH_UTILS_H
+ 
+ #include <string>
++#include <vector>
+ 
+ namespace OHOS {
+ namespace AbilityBase {
+diff --git a/foundation/ability/ability_base/interfaces/kits/native/extractortool/src/file_path_utils.cpp b/foundation/ability/ability_base/interfaces/kits/native/extractortool/src/file_path_utils.cpp
+index 6d52a2c..11a49ac 100644
+--- a/foundation/ability/ability_base/interfaces/kits/native/extractortool/src/file_path_utils.cpp
++++ b/foundation/ability/ability_base/interfaces/kits/native/extractortool/src/file_path_utils.cpp
+@@ -18,7 +18,7 @@
+ #include <fstream>
+ #include <regex>
+ #include <vector>
+-
++#include <climits>
+ #include "constants.h"
+ 
+ #ifdef WINDOWS_PLATFORM
+diff --git a/foundation/window/window_manager/previewer/BUILD.gn b/foundation/window/window_manager/previewer/BUILD.gn
+index 336f4f6caf..3275c7c89d 100644
+--- a/foundation/window/window_manager/previewer/BUILD.gn
++++ b/foundation/window/window_manager/previewer/BUILD.gn
+@@ -188,7 +188,7 @@ if (!ispreview) {
+                 "/window/window_manager/libpreviewer_window" + suffix ]
+     deps = [ ":previewer_window" ]
+ 
+-    if (current_os == "mingw" || current_os == "mac") {
++    if (current_os == "mingw" || current_os == "mac" || current_os == "linux") {
+       deps += [ ":window_stage_copy_modules" ]
+       shared_library_path =
+           get_label_info(":previewer_window_napi", "root_out_dir")
+diff --git a/foundation/window/window_manager/previewer/src/window_scene.cpp b/foundation/window/window_manager/previewer/src/window_scene.cpp
+index f1f4a79672..f06a63692a 100644
+--- a/foundation/window/window_manager/previewer/src/window_scene.cpp
++++ b/foundation/window/window_manager/previewer/src/window_scene.cpp
+@@ -29,6 +29,9 @@ constexpr HiviewDFX::HiLogLabel LABEL = {LOG_CORE, HILOG_DOMAIN_WINDOW, "WindowS
+ }
+ WindowScene::~WindowScene()
+ {
++    if (mainWindow_ != nullptr) {
++        mainWindow_->Destroy();
++    }
+ }
+ 
+ WMError WindowScene::Init(DisplayId displayId, const std::shared_ptr<AbilityRuntime::Context>& context,
+diff --git a/foundation/window/window_manager/previewer/window_stage_modules/BUILD.gn b/foundation/window/window_manager/previewer/window_stage_modules/BUILD.gn
+index 7adc8f747e..dc5c57446d 100644
+--- a/foundation/window/window_manager/previewer/window_stage_modules/BUILD.gn
++++ b/foundation/window/window_manager/previewer/window_stage_modules/BUILD.gn
+@@ -29,7 +29,7 @@ template("gen_js_src_binary") {
+   gen_obj(target_name + "_js") {
+     input = invoker.js_source
+ 
+-    if (is_mac || is_mingw) {
++    if (is_mac || is_mingw || is_linux) {
+       output = target_out_dir + "/" + invoker.target_name + "_js.c"
+     } else {
+       output = target_out_dir + "/" + invoker.target_name + "_js.o"
+@@ -43,7 +43,7 @@ template("gen_js_src_binary") {
+         get_label_info(":gen_abc_" + invoker.target_name, "target_out_dir") +
+         "/" + get_path_info(invoker.js_source, "name") + ".abc"
+ 
+-    if (is_mac || is_mingw) {
++    if (is_mac || is_mingw || is_linux) {
+       output = target_out_dir + "/" + invoker.target_name + "_abc.c"
+     } else {
+       output = target_out_dir + "/" + invoker.target_name + "_abc.o"
+diff --git a/foundation/graphic/graphic_2d/ace_platforms.gni b/foundation/graphic/graphic_2d/ace_platforms.gni
+index bd679d5bc7..ab2d896b7d 100644
+--- a/foundation/graphic/graphic_2d/ace_platforms.gni
++++ b/foundation/graphic/graphic_2d/ace_platforms.gni
+@@ -13,7 +13,6 @@
+ 
+ import("graphic_config.gni")
+ 
+-enable_glfw_window = false
+ use_mingw_win = "${current_os}_${current_cpu}" == "mingw_x86_64"
+ graphic_2d_root = "//foundation/graphic/graphic_2d"
+ ace_platforms = []
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/image_impl.h b/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/image_impl.h
+index 386d9fbbfd..cf518600bc 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/image_impl.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/image_impl.h
+@@ -65,7 +65,7 @@ public:
+ #ifdef RS_ENABLE_GPU
+     virtual bool BuildFromBitmap(GPUContext& gpuContext, const Bitmap& bitmap, bool ignoreAlpha = false) = 0;
+     virtual bool MakeFromEncoded(const std::shared_ptr<Data>& data) = 0;
+-    virtual bool BuildSubset(const std::shared_ptr<Image> image, const RectI& rect, GPUContext& gpuContext);
++    virtual bool BuildSubset(const std::shared_ptr<Image> image, const RectI& rect, GPUContext& gpuContext) = 0;
+     virtual bool BuildFromCompressed(GPUContext& gpuContext, const std::shared_ptr<Data>& data, int width, int height,
+         CompressedType type, const std::shared_ptr<ColorSpace>& colorSpace = nullptr) = 0;
+     virtual bool BuildFromTexture(GPUContext& gpuContext, const TextureInfo& info, TextureOrigin origin,
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/matrix44_impl.h b/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/matrix44_impl.h
+index fe3f72744d..77317446f7 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/matrix44_impl.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/2d_graphics/src/drawing/engine_adapter/impl_interface/matrix44_impl.h
+@@ -36,9 +36,9 @@ public:
+ 
+     virtual void Translate(scalar dx, scalar dy, scalar dz) = 0;
+     virtual void Scale(scalar sx, scalar sy, scalar sz) = 0;
+-    virtual void PreTranslate(scalar dx, scalar dy, scalar dz);
+-    virtual void PostTranslate(scalar dx, scalar dy, scalar dz);
+-    virtual void PreScale(scalar sx, scalar sy, scalar sz);
++    virtual void PreTranslate(scalar dx, scalar dy, scalar dz) = 0;
++    virtual void PostTranslate(scalar dx, scalar dy, scalar dz) = 0;
++    virtual void PreScale(scalar sx, scalar sy, scalar sz) = 0;
+     virtual void Multiply(const Matrix44& a, const Matrix44& b) = 0;
+     virtual void SetMatrix44ColMajor(const std::array<scalar, MATRIX44_SIZE>& buffer) = 0;
+     virtual void SetMatrix44RowMajor(const std::array<scalar, MATRIX44_SIZE>& buffer) = 0;
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/export/glfw_render_context.h b/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/export/glfw_render_context.h
+index 69d129f104..ca94d2b4eb 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/export/glfw_render_context.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/export/glfw_render_context.h
+@@ -18,6 +18,9 @@
+ 
+ #include <functional>
+ #include <memory>
++#ifdef __APPLE__
++#include <mutex>
++#endif
+ #include <string>
+ 
+ struct GLFWwindow;
+@@ -56,12 +59,25 @@ public:
+     void MakeCurrent();
+     void SwapBuffers();
+ 
++    bool IsVisible()
++    {
++        return isVisible_;
++    }
++#ifdef __APPLE__
++    void MakeRenderingCurrent();
++    bool CreateRenderingContext();
++    void CreateTexture();
++    void CopySnapshot(void* addr);
++    void DrawTexture();
++#endif
++
+     /* input event */
+     void OnMouseButton(const OnMouseButtonFunc &onMouseBotton);
+     void OnCursorPos(const OnCursorPosFunc &onCursorPos);
+     void OnKey(const OnKeyFunc &onKey);
+     void OnChar(const OnCharFunc &onChar);
+     void OnSizeChanged(const OnSizeChangedFunc &onSizeChanged);
++    void GetFrameBufferSize(int32_t &width, int32_t &height);
+ 
+ private:
+     static void OnMouseButton(GLFWwindow *window, int button, int action, int mods);
+@@ -81,6 +97,15 @@ private:
+ 
+     int32_t width_ = 0;
+     int32_t height_ = 0;
++    bool isVisible_;
++#ifdef __APPLE__
++    int32_t framebufferWidth_ = 0;
++    int32_t framebufferHeight_ = 0;
++    GLFWwindow *renderingWindow_ = nullptr;
++    std::mutex renderingMutex;
++    unsigned int textureId;
++    bool textureReady = false;
++#endif
+ };
+ } // namespace OHOS::Rosen
+ 
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/src/glfw_render_context.cpp b/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/src/glfw_render_context.cpp
+index 39e322e6e0..a5c85bd982 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/src/glfw_render_context.cpp
++++ b/foundation/graphic/graphic_2d/rosen/modules/glfw_render_context/src/glfw_render_context.cpp
+@@ -17,6 +17,9 @@
+ 
+ #include <mutex>
+ 
++#ifdef __APPLE__
++#include <glad/gl.h>
++#endif
+ #include <GLFW/glfw3.h>
+ 
+ #include "hilog/log.h"
+@@ -89,6 +92,7 @@ void GlfwRenderContext::Terminate()
+ int GlfwRenderContext::CreateGlfwWindow(int32_t width, int32_t height, bool visible)
+ {
+     ::OHOS::HiviewDFX::HiLog::Info(LABEL, "CreateGlfwWindow");
++    isVisible_ = visible;
+     if (external_) {
+         return 0;
+     }
+@@ -109,10 +113,21 @@ int GlfwRenderContext::CreateGlfwWindow(int32_t width, int32_t height, bool visi
+ 
+     glfwSetWindowUserPointer(window_, this);
+ 
++#ifdef __APPLE__
++    if (isVisible_) {
++        glfwGetFramebufferSize(window_, &framebufferWidth_, &framebufferHeight_);
++    }
++#endif
+     width_ = width;
+     height_ = height;
+     ::OHOS::HiviewDFX::HiLog::Info(LABEL, "glfwSetWindowSizeCallback %{public}d %{public}d", width, height);
+     glfwSetWindowSizeCallback(window_, GlfwRenderContext::OnSizeChanged);
++
++#ifdef __APPLE__
++    if (isVisible_) {
++        CreateTexture();
++    }
++#endif
+     return 0;
+ }
+ 
+@@ -122,6 +137,13 @@ void GlfwRenderContext::DestroyWindow()
+         return;
+     }
+ 
++#ifdef __APPLE__
++    glDeleteTextures(1, &textureId);
++    if (renderingWindow_ != nullptr) {
++        glfwDestroyWindow(renderingWindow_);
++    }
++#endif
++
+     if (window_ != nullptr) {
+         glfwDestroyWindow(window_);
+     }
+@@ -140,6 +162,11 @@ void GlfwRenderContext::WaitForEvents()
+ void GlfwRenderContext::PollEvents()
+ {
+     glfwPollEvents();
++#ifdef __APPLE__
++    if (isVisible_) {
++        DrawTexture();
++    }
++#endif
+ }
+ 
+ void GlfwRenderContext::GetWindowSize(int32_t &width, int32_t &height)
+@@ -161,7 +188,14 @@ void GlfwRenderContext::SetWindowTitle(const std::string &title)
+ 
+ std::string GlfwRenderContext::GetClipboardData()
+ {
+-    return glfwGetClipboardString(window_);
++    if (!window_) {
++        return std::string("");
++    }
++    const char* text = glfwGetClipboardString(window_);
++    if (!text) {
++        return std::string("");
++    }
++    return std::string(text);
+ }
+ 
+ void GlfwRenderContext::SetClipboardData(const std::string &data)
+@@ -174,11 +208,106 @@ void GlfwRenderContext::MakeCurrent()
+     glfwMakeContextCurrent(window_);
+ }
+ 
++#ifdef __APPLE__
++void GlfwRenderContext::MakeRenderingCurrent()
++{
++    if (renderingWindow_) {
++        glfwMakeContextCurrent(renderingWindow_);
++    }
++}
++
++bool GlfwRenderContext::CreateRenderingContext()
++{
++    if (!isVisible_) {
++        return false;
++    }
++    if (renderingWindow_ != nullptr) {
++        return true;
++    }
++
++    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
++    renderingWindow_ = glfwCreateWindow(width_, height_, "glfw window", nullptr, nullptr);
++    if (renderingWindow_ == nullptr) {
++        return false;
++    }
++    return true;
++}
++
++void GlfwRenderContext::CreateTexture()
++{
++    if (!isVisible_) {
++        return;
++    }
++    glfwMakeContextCurrent(window_);
++    gladLoadGL(glfwGetProcAddress);
++    std::lock_guard<std::mutex> lock(renderingMutex);
++    glGenTextures(1, &textureId);
++    glBindTexture(GL_TEXTURE_2D, textureId);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, framebufferWidth_, framebufferHeight_, 0,
++        GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++}
++
++void GlfwRenderContext::CopySnapshot(void* addr)
++{
++    if (addr == nullptr || !isVisible_) {
++        return;
++    }
++    std::lock_guard<std::mutex> lock(renderingMutex);
++    glfwMakeContextCurrent(window_);
++    glBindTexture(GL_TEXTURE_2D, textureId);
++    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, framebufferWidth_, framebufferHeight_, GL_RGBA, GL_UNSIGNED_BYTE, addr);
++    textureReady = true;
++    glfwMakeContextCurrent(NULL);
++}
++
++void GlfwRenderContext::DrawTexture()
++{
++    std::lock_guard<std::mutex> lock(renderingMutex);
++    if (!textureReady || !isVisible_) {
++        return;
++    }
++
++    glfwMakeContextCurrent(window_);
++
++    glClear(GL_COLOR_BUFFER_BIT);
++    glBindTexture(GL_TEXTURE_2D, textureId);
++    glEnable(GL_TEXTURE_2D);
++
++    glBegin(GL_QUADS);
++    glPixelStorei(GL_UNPACK_ROW_LENGTH, framebufferWidth_);
++
++    glTexCoord2f(0, 0);
++    glVertex2f(-1, 1);
++
++    glTexCoord2f(1, 0);
++    glVertex2f(1, 1);
++
++    glTexCoord2f(1, 1);
++    glVertex2f(1, -1);
++
++    glTexCoord2f(0, 1);
++    glVertex2f(-1, -1);
++
++    glEnd();
++    glDisable(GL_TEXTURE_2D);
++
++    glfwSwapBuffers(window_);
++    textureReady = false;
++}
++#endif
++
+ void GlfwRenderContext::SwapBuffers()
+ {
+     glfwSwapBuffers(window_);
+ }
+ 
++void GlfwRenderContext::GetFrameBufferSize(int32_t &width, int32_t &height)
++{
++    glfwGetFramebufferSize(window_, &width, &height);
++}
++
+ void GlfwRenderContext::OnMouseButton(const OnMouseButtonFunc &onMouseBotton)
+ {
+     onMouseBotton_ = onMouseBotton;
+@@ -249,7 +378,9 @@ void GlfwRenderContext::OnSizeChanged(GLFWwindow *window, int32_t width, int32_t
+     if (that->width_ != width || that->height_ != height) {
+         glfwSetWindowSize(window, that->width_, that->height_);
+     }
+-    that->onSizeChanged_(that->width_, that->height_);
++    if (that->onSizeChanged_) {
++        that->onSizeChanged_(that->width_, that->height_);
++    }
+     ::OHOS::HiviewDFX::HiLog::Info(LABEL, "OnSizeChanged done %{public}d %{public}d", width, height);
+ }
+ } // namespace OHOS::Rosen
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/platform/BUILD.gn b/foundation/graphic/graphic_2d/rosen/modules/platform/BUILD.gn
+index d6b7be2e55..dbe79b4c92 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/platform/BUILD.gn
++++ b/foundation/graphic/graphic_2d/rosen/modules/platform/BUILD.gn
+@@ -42,7 +42,7 @@ config("eventhandler_config") {
+   }
+ }
+ 
+-ohos_source_set("impl_eventhandler") {
++ohos_shared_library("impl_eventhandler") {
+   public_configs = [ ":eventhandler_config" ]
+   sources = [
+     "eventhandler_impl/epoll_io_waiter_mingw.cpp",
+@@ -58,6 +58,10 @@ ohos_source_set("impl_eventhandler") {
+   cflags = [ "-std=c++17" ]
+   deps = [ ":utils" ]
+ 
++  if (is_mingw) {
++    defines += [ "IMPL_EVENTHANDELER_BUILD" ]
++  }
++
+   external_deps = [
+     "hilog:libhilog",
+     "libuv:uv",
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_handler.h b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_handler.h
+index 9d7264124a..c7c923fb2c 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_handler.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_handler.h
+@@ -18,6 +18,7 @@
+ 
+ #include "event_runner.h"
+ #include "dumper.h"
++#include "eventhandler_macros.h"
+ 
+ #ifndef __has_builtin
+ #define __has_builtin(x) 0
+@@ -60,7 +61,7 @@ struct Caller {
+ template<typename T>
+ class ThreadLocalData;
+ 
+-class EventHandler : public std::enable_shared_from_this<EventHandler> {
++class IMPL_EVENTHANDELER_EXPORT EventHandler : public std::enable_shared_from_this<EventHandler> {
+ public:
+     using CallbackTimeout = std::function<void()>;
+     using Callback = InnerEvent::Callback;
+@@ -953,8 +954,6 @@ private:
+     std::shared_ptr<EventRunner> eventRunner_;
+     CallbackTimeout deliveryTimeoutCallback_;
+     CallbackTimeout distributeTimeoutCallback_;
+-
+-    static thread_local std::weak_ptr<EventHandler> currentEventHandler;
+ };
+ }  // namespace AppExecFwk
+ namespace EventHandling = AppExecFwk;
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_runner.h b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_runner.h
+index bf2caee10d..91b94aff51 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_runner.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/event_runner.h
+@@ -21,12 +21,13 @@
+ #include "event_queue.h"
+ #include "dumper.h"
+ #include "logger.h"
++#include "eventhandler_macros.h"
+ 
+ namespace OHOS {
+ namespace AppExecFwk {
+ class EventInnerRunner;
+ 
+-class EventRunner final {
++class IMPL_EVENTHANDELER_EXPORT EventRunner final {
+ public:
+     EventRunner() = delete;
+     ~EventRunner();
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/inner_event.h b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/inner_event.h
+index a27851eeef..4722a3d968 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/inner_event.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/inner_event.h
+@@ -24,6 +24,7 @@
+ #include <typeinfo>
+ 
+ #include "nocopyable.h"
++#include "eventhandler_macros.h"
+ 
+ namespace OHOS {
+ namespace HiviewDFX {
+@@ -37,7 +38,7 @@ class EventHandler;
+ 
+ const std::string LINE_SEPARATOR = "\n";
+ 
+-class InnerEvent final {
++class IMPL_EVENTHANDELER_EXPORT InnerEvent final {
+ public:
+     using Clock = std::chrono::steady_clock;
+     using TimePoint = std::chrono::time_point<Clock>;
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler_impl/event_handler.cpp b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler_impl/event_handler.cpp
+index c1fcb58200..ef2d39ebf3 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler_impl/event_handler.cpp
++++ b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler_impl/event_handler.cpp
+@@ -45,7 +45,7 @@ namespace OHOS {
+ namespace AppExecFwk {
+ static constexpr int DATETIME_STRING_LENGTH = 80;
+ 
+-thread_local std::weak_ptr<EventHandler> EventHandler::currentEventHandler;
++static thread_local std::weak_ptr<EventHandler> currentEventHandler;
+ 
+ std::shared_ptr<EventHandler> EventHandler::Current()
+ {
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/config.gni b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/config.gni
+index 5b7062c281..7c1cbdab3c 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/config.gni
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/config.gni
+@@ -49,6 +49,7 @@ if (is_emulator) {
+ 
+ if (rosen_preview) {
+   rs_common_define += [ "ROSEN_PREVIEW" ]
++  rs_common_define += [ "USE_GLFW_WINDOW" ]
+ }
+ 
+ if (rosen_is_ohos) {
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_exception_check.h b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_exception_check.h
+index e1b3303061..01d2ab6d58 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_exception_check.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_exception_check.h
+@@ -73,4 +73,4 @@ struct RSB_EXPORT ExceptionCheck {
+ } // namespace Rosen
+ } // namespace OHOS
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/BUILD.gn b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/BUILD.gn
+index fd50243d8f..55812a2ba7 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/BUILD.gn
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/BUILD.gn
+@@ -44,9 +44,7 @@ ohos_source_set("darwin") {
+   ]
+ 
+   defines += [ "MODULE_RSB" ]
+-  if (enable_glfw_window) {
+-    defines += [ "USE_GLFW_WINDOW" ]
+-  }
++  defines += [ "USE_GLFW_WINDOW" ]
+ 
+   cflags = [ "-std=c++17" ]
+ 
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.cpp b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.cpp
+index 61e2073d08..4a30727546 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.cpp
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.cpp
+@@ -25,6 +25,7 @@
+ 
+ #include "platform/common/rs_log.h"
+ #include "rs_surface_frame_darwin.h"
++#include <dispatch/dispatch.h>
+ 
+ namespace OHOS {
+ namespace Rosen {
+@@ -57,6 +58,15 @@ std::unique_ptr<RSSurfaceFrame> RSSurfaceDarwin::RequestFrame(
+         ROSEN_LOGE("RSSurfaceDarwin::RequestFrame, producer is nullptr");
+         return nullptr;
+     }
++
++#ifdef USE_GLFW_WINDOW
++    if (GlfwRenderContext::GetGlobal()->IsVisible()) {
++        dispatch_sync(dispatch_get_main_queue(), ^{
++          GlfwRenderContext::GetGlobal()->CreateRenderingContext();
++        });
++    }
++#endif
++
+     auto frame = std::make_unique<RSSurfaceFrameDarwin>(width, height);
+     if (SetupGrContext() == false) {
+         return frame;
+@@ -74,13 +84,6 @@ std::unique_ptr<RSSurfaceFrame> RSSurfaceDarwin::RequestFrame(
+         ROSEN_LOGE("RSSurfaceDarwin::RequestFrame, surface bind failed");
+         return frame;
+     }
+-#ifdef USE_GLFW_WINDOW
+-    const auto canvas = frame->surface_->GetCanvas();
+-    if (canvas != nullptr) {
+-        canvas->Translate(0, frame->height_);
+-        canvas->Scale(1, -1);
+-    }
+-#endif
+     return frame;
+ }
+ 
+@@ -112,11 +115,6 @@ bool RSSurfaceDarwin::FlushFrame(std::unique_ptr<RSSurfaceFrame>& frame, uint64_
+             image->ReadPixels(bitmap, 0, 0);
+         }
+     }
+-#ifdef USE_GLFW_WINDOW
+-    if (frameDarwin->surface_ != nullptr) {
+-        YInvert(addr, frameDarwin->width_, frameDarwin->height_);
+-    }
+-#endif
+ 
+     int32_t width = frameDarwin->width_;
+     int32_t height = frameDarwin->height_;
+@@ -124,7 +122,7 @@ bool RSSurfaceDarwin::FlushFrame(std::unique_ptr<RSSurfaceFrame>& frame, uint64_
+     onRender_(addr, size, width, height, uiTimestamp);
+ 
+ #ifdef USE_GLFW_WINDOW
+-    GlfwRenderContext::GetGlobal()->SwapBuffers();
++    GlfwRenderContext::GetGlobal()->CopySnapshot(addr);
+ #endif
+     return true;
+ }
+@@ -139,47 +137,50 @@ void RSSurfaceDarwin::SetRenderContext(std::shared_ptr<RenderContext> context)
+     renderContext_ = context;
+ }
+ 
+-void RSSurfaceDarwin::YInvert(void *addr, int32_t width, int32_t height)
++bool RSSurfaceDarwin::SetupGrContext()
+ {
+-    const auto &pixels = reinterpret_cast<uint32_t *>(addr);
+-    const auto &halfHeight = height / 0x2;
+-    const auto &tmpPixels = std::make_unique<uint32_t[]>(width * halfHeight);
+-    for (int32_t i = 0; i < halfHeight; i++) {
+-        for (int32_t j = 0; j < width; j++) {
+-            tmpPixels[i * width + j] = pixels[i * width + j];
++    if (grContext_ != nullptr) {
++#ifdef USE_GLFW_WINDOW
++        if (GlfwRenderContext::GetGlobal()->IsVisible()) {
++            GlfwRenderContext::GetGlobal()->MakeRenderingCurrent();
+         }
++#endif
++        return true;
+     }
+ 
+-    for (int32_t i = 0; i < halfHeight; i++) {
+-        const auto &r = height - 1 - i;
+-        for (int32_t j = 0; j < width; j++) {
+-            pixels[i * width + j] = pixels[r * width + j];
+-        }
++    bool createOnMainThread = false;
++#ifdef USE_GLFW_WINDOW
++    if (GlfwRenderContext::GetGlobal()->IsVisible()) {
++        createOnMainThread = true;
+     }
+-
+-    for (int32_t i = 0; i < halfHeight; i++) {
+-        const auto &r = height - 1 - i;
+-        for (int32_t j = 0; j < width; j++) {
+-            pixels[r * width + j] = tmpPixels[i * width + j];
++#endif
++    if (createOnMainThread) {
++        __block auto grContext = std::make_shared<Drawing::GPUContext>();
++        __block bool contextCreated = true;
++        dispatch_sync(dispatch_get_main_queue(), ^{
++            Drawing::GPUContextOptions options;
++            if (!grContext->BuildFromGL(options)) {
++                RS_LOGE("grContext is nullptr");
++                contextCreated = false;
++            }
++        });
++        if (!contextCreated) {
++            return false;
+         }
+-    }
+-}
+-
+-bool RSSurfaceDarwin::SetupGrContext()
+-{
+-    if (grContext_ != nullptr) {
++        GlfwRenderContext::GetGlobal()->MakeRenderingCurrent();
++        grContext_ = grContext;
++        return true;
++    } else {
++        GlfwRenderContext::GetGlobal()->MakeCurrent();
++        auto grContext = std::make_shared<Drawing::GPUContext>();
++        Drawing::GPUContextOptions options;
++        if (!grContext->BuildFromGL(options)) {
++            RS_LOGE("grContext is nullptr");
++            return false;
++        }
++        grContext_ = grContext;
+         return true;
+     }
+-
+-    GlfwRenderContext::GetGlobal()->MakeCurrent();
+-    auto grContext = std::make_shared<Drawing::GPUContext>();
+-    Drawing::GPUContextOptions options;
+-    if (!grContext->BuildFromGL(options)) {
+-        RS_LOGE("grContext is nullptr");
+-        return false;
+-    }
+-    grContext_ = grContext;
+-    return true;
+ }
+ 
+ uint32_t RSSurfaceDarwin::GetQueueSize() const
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.h b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.h
+index 329ea0dfdb..c6b3a53389 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.h
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/darwin/rs_surface_darwin.h
+@@ -57,7 +57,6 @@ public:
+     }
+ 
+ private:
+-    void YInvert(void *addr, int32_t width, int32_t height);
+     bool SetupGrContext();
+ 
+     std::shared_ptr<RenderContext> renderContext_ = nullptr;
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/BUILD.gn b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/BUILD.gn
+index 867c08468e..13db0388c5 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/BUILD.gn
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/BUILD.gn
+@@ -41,9 +41,7 @@ ohos_source_set("windows") {
+   include_dirs = [ "$rosen_root/modules/render_service_base/include" ]
+ 
+   defines += [ "MODULE_RSB" ]
+-  if (enable_glfw_window) {
+-    defines += [ "USE_GLFW_WINDOW" ]
+-  }
++  defines += [ "USE_GLFW_WINDOW" ]
+ 
+   cflags = [ "-std=c++17" ]
+ 
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/rs_surface_windows.cpp b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/rs_surface_windows.cpp
+index 8d4a7ee939..d73ea86d9e 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/rs_surface_windows.cpp
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_base/src/platform/windows/rs_surface_windows.cpp
+@@ -76,13 +76,6 @@ std::unique_ptr<RSSurfaceFrame> RSSurfaceWindows::RequestFrame(
+         ROSEN_LOGE("RSSurfaceWindows::RequestFrame, surface bind failed");
+         return frame;
+     }
+-#ifdef USE_GLFW_WINDOW
+-    const auto canvas = frame->surface_->GetCanvas();
+-    if (canvas != nullptr) {
+-        canvas->Translate(0, frame->height_);
+-        canvas->Scale(1, -1);
+-    }
+-#endif
+     return frame;
+ }
+ 
+@@ -114,11 +107,6 @@ bool RSSurfaceWindows::FlushFrame(std::unique_ptr<RSSurfaceFrame>& frame, uint64
+             image->ReadPixels(bitmap, 0, 0);
+         }
+     }
+-#ifdef USE_GLFW_WINDOW
+-    if (frameWindows->surface_ != nullptr) {
+-        YInvert(addr, frameWindows->width_, frameWindows->height_);
+-    }
+-#endif
+ 
+     int32_t width = frameWindows->width_;
+     int32_t height = frameWindows->height_;
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/pipeline/rs_render_thread.cpp b/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/pipeline/rs_render_thread.cpp
+index f5c3cdf030..54c0b523f8 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/pipeline/rs_render_thread.cpp
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/pipeline/rs_render_thread.cpp
+@@ -109,6 +109,7 @@ void SendFrameEvent(bool start)
+ 
+ RSRenderThread& RSRenderThread::Instance()
+ {
++    RSRenderNodeGC::Instance(); // To ensure that RSRenderNodeGC is created before RSRenderThread to be destroyed after!
+     static RSRenderThread renderThread;
+     return renderThread;
+ }
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/render_thread/rs_render_thread_visitor.cpp b/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/render_thread/rs_render_thread_visitor.cpp
+index f5c5c3d8c9..2f21d4f43e 100644
+--- a/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/render_thread/rs_render_thread_visitor.cpp
++++ b/foundation/graphic/graphic_2d/rosen/modules/render_service_client/core/render_thread/rs_render_thread_visitor.cpp
+@@ -66,6 +66,10 @@
+ #endif
+ #endif
+ 
++#ifdef USE_GLFW_WINDOW
++#include <glfw_render_context.h>
++#endif
++
+ namespace OHOS {
+ namespace Rosen {
+ RSRenderThreadVisitor::RSRenderThreadVisitor()
+@@ -393,8 +397,21 @@ void RSRenderThreadVisitor::ProcessRootRenderNode(RSRootRenderNode& node)
+     drawCmdListVector_.clear();
+     curDirtyManager_ = node.GetDirtyManager();
+     const auto& property = node.GetRenderProperties();
++#ifdef USE_GLFW_WINDOW
++    int32_t glfwWidth = 0;
++    int32_t glfwHeight = 0;
++    if (GlfwRenderContext::GetGlobal()->IsVisible()) {
++        GlfwRenderContext::GetGlobal()->GetFrameBufferSize(glfwWidth, glfwHeight);
++    } else {
++        glfwWidth = node.GetSuggestedBufferWidth() * property.GetScaleX();
++        glfwHeight = node.GetSuggestedBufferHeight() * property.GetScaleY();
++    }
++    const float bufferWidth = static_cast<float>(glfwWidth);
++    const float bufferHeight = static_cast<float>(glfwHeight);
++#else
+     const float bufferWidth = node.GetSuggestedBufferWidth() * property.GetScaleX();
+     const float bufferHeight = node.GetSuggestedBufferHeight() * property.GetScaleY();
++#endif
+     // node's surface size already check, so here we do not need to check return
+     // attention: currently surfaceW/H are float values transformed into int implicitly
+     (void)curDirtyManager_->SetSurfaceSize(bufferWidth, bufferHeight);
+diff --git a/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/eventhandler_macros.h b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/eventhandler_macros.h
+new file mode 100644
+index 0000000000..f7533315f2
+--- /dev/null
++++ b/foundation/graphic/graphic_2d/rosen/modules/platform/eventhandler/eventhandler_macros.h
+@@ -0,0 +1,29 @@
++/*
++ * Copyright (c) 2021-2025 Huawei Device Co., Ltd.
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef FOUNDATION_GRAPHIC_GRAPHIC_2D_ROSEN_MODULES_PLATFORM_EVENT_HANDLER_EVENT_HANDLER_MACROS_H
++#define FOUNDATION_GRAPHIC_GRAPHIC_2D_ROSEN_MODULES_PLATFORM_EVENT_HANDLER_EVENT_HANDLER_MACROS_H
++
++#ifdef _WIN32
++    #ifdef IMPL_EVENTHANDELER_BUILD
++        #define IMPL_EVENTHANDELER_EXPORT __declspec(dllexport)
++    #else
++        #define IMPL_EVENTHANDELER_EXPORT __declspec(dllimport)
++    #endif
++#else
++    #define IMPL_EVENTHANDELER_EXPORT __attribute__((visibility("default")))
++#endif
++
++#endif //FOUNDATION_GRAPHIC_GRAPHIC_2D_ROSEN_MODULES_PLATFORM_EVENT_HANDLER_EVENT_HANDLER_MACROS_H
+diff --git a/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.cpp b/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.cpp
+index 37f256b21fc..8e08bbc169f 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.cpp
++++ b/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.cpp
+@@ -18,6 +18,8 @@
+ #include <functional>
+ 
+ #include "base/log/log.h"
++#include "base/memory/referenced.h"
++#include "core/pipeline/pipeline_base.h"
+ 
+ #ifndef ENABLE_ROSEN_BACKEND
+ #include "flutter/lib/ui/ui_dart_state.h"
+@@ -65,6 +67,7 @@
+ #include "core/pipeline/pipeline_context.h"
+ #include "core/pipeline_ng/pipeline_context.h"
+ #include "frameworks/simulator/ability_simulator/include/ability_context.h"
++#include "frameworks/simulator/common/include/context.h"
+ 
+ namespace OHOS::Ace::Platform {
+ namespace {
+@@ -143,26 +146,32 @@ void AceContainer::Destroy()
+     if (!taskExecutor_) {
+         return;
+     }
+-    auto weak = AceType::WeakClaim(AceType::RawPtr(pipelineContext_));
+-    taskExecutor_->PostTask(
+-        [weak]() {
+-            auto context = weak.Upgrade();
+-            if (context == nullptr) {
+-                return;
+-            }
+-            context->Destroy();
+-        },
+-        TaskExecutor::TaskType::UI, "ArkUIPipelineDestroy");
++    // 1. Destroy Pipeline on UI thread.
++    RefPtr<PipelineBase> context;
++    {
++        context.Swap(pipelineContext_);
++    }
++    auto uiTask = [context]() { context->Destroy(); };
++    if (GetSettings().usePlatformAsUIThread) {
++        uiTask();
++    } else {
++        taskExecutor_->PostTask(uiTask, TaskExecutor::TaskType::UI, "ArkUIPipelineDestroy");
++    }
+ 
++    // 2. Destroy Frontend on JS thread.
+     RefPtr<Frontend> frontend;
+-    frontend_.Swap(frontend);
+-    if (frontend && taskExecutor_) {
+-        taskExecutor_->PostTask(
+-            [frontend]() {
+-                frontend->UpdateState(Frontend::State::ON_DESTROY);
+-                frontend->Destroy();
+-            },
+-            TaskExecutor::TaskType::JS, "ArkUIFrontendDestroy");
++    {
++        frontend.Swap(frontend_);
++    }
++    auto jsTask = [frontend]() {
++        auto lock = frontend->GetLock();
++        frontend->Destroy();
++    };
++    frontend->UpdateState(Frontend::State::ON_DESTROY);
++    if (GetSettings().usePlatformAsUIThread && GetSettings().useUIAsJSThread) {
++        jsTask();
++    } else {
++        taskExecutor_->PostTask(jsTask, TaskExecutor::TaskType::JS, "ArkUIFrontendDestroy");
+     }
+ 
+     messageBridge_.Reset();
+@@ -237,12 +246,14 @@ void AceContainer::InitializeFrontend()
+ 
+ void AceContainer::RunNativeEngineLoop()
+ {
++#ifndef LINUX_PLATFORM
+     taskExecutor_->PostTask([frontend = frontend_]() { frontend->RunNativeEngineLoop(); }, TaskExecutor::TaskType::JS,
+         "ArkUIRunNativeEngineLoop");
+     // After the JS thread executes frontend ->RunNativeEngineLoop(),
+     // it is thrown back into the Platform thread queue to form a loop.
+     taskExecutor_->PostTask([this]() { RunNativeEngineLoop(); },
+         TaskExecutor::TaskType::PLATFORM, "ArkUIRunNativeEngineLoop");
++#endif
+ }
+ 
+ void AceContainer::InitializeAppConfig(const std::string& assetPath, const std::string& bundleName,
+@@ -546,8 +557,16 @@ void AceContainer::DestroyContainer(int32_t instanceId)
+         taskExecutor->PostSyncTask([] { LOGI("Wait JS thread..."); }, TaskExecutor::TaskType::JS, "ArkUIWaitLog");
+     }
+     container->DestroyView(); // Stop all threads(ui,gpu,io) for current ability.
+-    EngineHelper::RemoveEngine(instanceId);
+-    AceEngine::Get().RemoveContainer(instanceId);
++    auto removeContainerTask = [instanceId] {
++        LOGI("Remove on Platform thread...");
++        EngineHelper::RemoveEngine(instanceId);
++        AceEngine::Get().RemoveContainer(instanceId);
++    };
++    if (container->GetSettings().usePlatformAsUIThread) {
++        removeContainerTask();
++    } else {
++        taskExecutor->PostTask(removeContainerTask, TaskExecutor::TaskType::PLATFORM, "ArkUIAceContainerRemove");
++    }
+ }
+ 
+ UIContentErrorCode AceContainer::RunPage(
+@@ -575,6 +594,17 @@ UIContentErrorCode AceContainer::RunPage(
+     return UIContentErrorCode::NULL_POINTER;
+ }
+ 
++UIContentErrorCode AceContainer::RunPage(
++    int32_t instanceId, const std::shared_ptr<std::vector<uint8_t>>& content, const std::string& params)
++{
++    auto container = AceEngine::Get().GetContainer(instanceId);
++    CHECK_NULL_RETURN(container, UIContentErrorCode::NULL_POINTER);
++    ContainerScope scope(instanceId);
++    auto front = container->GetFrontend();
++    CHECK_NULL_RETURN(front, UIContentErrorCode::NULL_POINTER);
++    return front->RunPage(content, params);
++}
++
+ void AceContainer::UpdateResourceConfiguration(const std::string& jsonStr)
+ {
+     ContainerScope scope(instanceId_);
+@@ -975,6 +1005,54 @@ void AceContainer::AttachView(
+     AceEngine::Get().RegisterToWatchDog(instanceId, taskExecutor_, GetSettings().useUIAsJSThread);
+ }
+ #else
++void AceContainer::InitThemeManagerTask()
++{
++    // Only init global resource here, construct theme in UI thread
++    auto themeManager = AceType::MakeRefPtr<ThemeManagerImpl>();
++
++    if (SystemProperties::GetResourceDecoupling()) {
++        auto resourceAdapter = ResourceAdapter::Create();
++        resourceAdapter->Init(resourceInfo_);
++        SaveResourceAdapter(bundleName_, moduleName_, instanceId_, resourceAdapter);
++        themeManager = AceType::MakeRefPtr<ThemeManagerImpl>(resourceAdapter);
++    }
++
++    pipelineContext_->SetThemeManager(themeManager);
++    // Init resource, load theme map.
++    if (!SystemProperties::GetResourceDecoupling()) {
++        themeManager->InitResource(resourceInfo_);
++    }
++    themeManager->LoadSystemTheme(resourceInfo_.GetThemeId());
++    auto themeTask = [themeManager, assetManager = assetManager_, colorScheme = colorScheme_,
++                pipelineContext = pipelineContext_]() {
++        themeManager->ParseSystemTheme();
++        themeManager->SetColorScheme(colorScheme);
++        themeManager->LoadCustomTheme(assetManager);
++        // get background color from theme
++        pipelineContext->SetAppBgColor(themeManager->GetBackgroundColor());
++    };
++    if (GetSettings().usePlatformAsUIThread) {
++        themeTask();
++    } else {
++        taskExecutor_->PostTask(themeTask, TaskExecutor::TaskType::UI, "ArkUISetBackgroundColor");
++    }
++}
++
++void AceContainer::InitEnvCallbackTask(UIEnvCallback callback)
++{
++    if (!useNewPipeline_) {
++        auto envCallbackTask = [context = pipelineContext_, callback]() {
++            CHECK_NULL_VOID(callback);
++            callback(AceType::DynamicCast<PipelineContext>(context));
++        };
++        if (GetSettings().usePlatformAsUIThread) {
++            envCallbackTask();
++        } else {
++            taskExecutor_->PostTask(envCallbackTask, TaskExecutor::TaskType::UI, "ArkUIEnvCallback");
++        }
++    }
++}
++
+ void AceContainer::AttachView(std::shared_ptr<Window> window, AceViewPreview* view, double density, int32_t width,
+     int32_t height, UIEnvCallback callback)
+ {
+@@ -1042,53 +1120,16 @@ void AceContainer::AttachView(std::shared_ptr<Window> window, AceViewPreview* vi
+     }
+ 
+     ThemeConstants::InitDeviceType();
+-    // Only init global resource here, construct theme in UI thread
+-    auto themeManager = AceType::MakeRefPtr<ThemeManagerImpl>();
+-
+-    if (SystemProperties::GetResourceDecoupling()) {
+-        auto resourceAdapter = ResourceAdapter::Create();
+-        resourceAdapter->Init(resourceInfo_);
+-        SaveResourceAdapter(bundleName_, moduleName_, instanceId_, resourceAdapter);
+-        themeManager = AceType::MakeRefPtr<ThemeManagerImpl>(resourceAdapter);
+-    }
++    InitThemeManagerTask();
++    InitEnvCallbackTask(callback);
+ 
+-    if (themeManager) {
+-        pipelineContext_->SetThemeManager(themeManager);
+-        // Init resource, load theme map.
+-        if (!SystemProperties::GetResourceDecoupling()) {
+-            themeManager->InitResource(resourceInfo_);
+-        }
+-        themeManager->LoadSystemTheme(resourceInfo_.GetThemeId());
+-        taskExecutor_->PostTask(
+-            [themeManager, assetManager = assetManager_, colorScheme = colorScheme_,
+-                pipelineContext = pipelineContext_]() {
+-                themeManager->ParseSystemTheme();
+-                themeManager->SetColorScheme(colorScheme);
+-                themeManager->LoadCustomTheme(assetManager);
+-                // get background color from theme
+-                pipelineContext->SetAppBgColor(themeManager->GetBackgroundColor());
+-            },
+-            TaskExecutor::TaskType::UI, "ArkUISetBackgroundColor");
+-    }
+-    if (!useNewPipeline_) {
+-        taskExecutor_->PostTask(
+-            [context = pipelineContext_, callback]() {
+-                CHECK_NULL_VOID(callback);
+-                callback(AceType::DynamicCast<PipelineContext>(context));
+-            },
+-            TaskExecutor::TaskType::UI, "ArkUIEnvCallback");
++    auto setupRootElementTask = [context = pipelineContext_]() { context->SetupRootElement(); };
++    if (GetSettings().usePlatformAsUIThread) {
++        setupRootElementTask();
++    } else {
++        taskExecutor_->PostTask(setupRootElementTask, TaskExecutor::TaskType::UI, "ArkUISetupRootElement");
+     }
+ 
+-    auto weak = AceType::WeakClaim(AceType::RawPtr(pipelineContext_));
+-    taskExecutor_->PostTask(
+-        [weak]() {
+-            auto context = weak.Upgrade();
+-            if (context == nullptr) {
+-                return;
+-            }
+-            context->SetupRootElement();
+-        },
+-        TaskExecutor::TaskType::UI, "ArkUISetupRootElement");
+     aceView_->Launch();
+ 
+     frontend_->AttachPipelineContext(pipelineContext_);
+@@ -1096,7 +1137,7 @@ void AceContainer::AttachView(std::shared_ptr<Window> window, AceViewPreview* vi
+     if (cardFronted) {
+         cardFronted->SetDensity(static_cast<double>(density));
+         taskExecutor_->PostTask(
+-            [weak, width, height]() {
++            [weak = WeakPtr<PipelineBase>(pipelineContext_), width, height]() {
+                 auto context = weak.Upgrade();
+                 if (context == nullptr) {
+                     return;
+@@ -1105,7 +1146,6 @@ void AceContainer::AttachView(std::shared_ptr<Window> window, AceViewPreview* vi
+             },
+             TaskExecutor::TaskType::UI, "ArkUISurfaceChanged");
+     }
+-
+     AceEngine::Get().RegisterToWatchDog(instanceId, taskExecutor_, GetSettings().useUIAsJSThread);
+ }
+ #endif
+diff --git a/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.h b/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.h
+index a7b395c5bcb..d5598bb688a 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.h
++++ b/foundation/arkui/ace_engine/adapter/preview/entrance/ace_container.h
+@@ -21,6 +21,17 @@
+ #include <string>
+ #include <vector>
+ 
++
++#include "interfaces/inner_api/ace/ui_content.h"
++#include "interfaces/inner_api/ace/viewport_config.h"
++#include "native_engine/native_engine.h"
++#include "native_engine/native_value.h"
++
++#include "adapter/preview/entrance/ace_run_args.h"
++#include "adapter/preview/external/ability/context.h"
++#include "adapter/preview/external/ability/fa/fa_context.h"
++#include "adapter/preview/external/ability/stage/stage_context.h"
++
+ #include "adapter/preview/entrance/ace_run_args.h"
+ #include "adapter/preview/entrance/ace_view_preview.h"
+ #include "adapter/preview/external/ability/stage/stage_pkg_context_info.h"
+@@ -64,7 +75,9 @@ public:
+     static void CreateContainer(
+         int32_t instanceId, FrontendType type, bool useNewPipeline, bool useCurrentEventRunner = false);
+     static void DestroyContainer(int32_t instanceId);
+-
++#ifdef LINUX_PLATFORM
++    void SetAniLocalStorage(void* storage, const std::shared_ptr<OHOS::AbilityRuntime::Context>& context);
++#endif // LINUX_PLATFORM
+     static void AddAssetPath(int32_t instanceId, const std::string& packagePath, const std::vector<std::string>& paths);
+     static void SetResourcesPathAndThemeStyle(int32_t instanceId, const std::string& systemResourcesPath,
+         const std::string& hmsResourcesPath, const std::string& appResourcesPath, const int32_t& themeId,
+@@ -79,6 +92,8 @@ public:
+ 
+     static UIContentErrorCode RunPage(
+         int32_t instanceId, const std::string& url, const std::string& params, bool isNamedRouter = false);
++    static UIContentErrorCode RunPage(
++        int32_t instanceId, const std::shared_ptr<std::vector<uint8_t>>& content, const std::string& params);
+     static RefPtr<AceContainer> GetContainerInstance(int32_t instanceId);
+     static void AddRouterChangeCallback(int32_t instanceId, const OnRouterChangeCallback& onRouterChangeCallback);
+     static void NativeOnConfigurationUpdated(int32_t instanceId);
+@@ -301,16 +316,6 @@ public:
+         mockJsonInfo_ = mockJsonInfo;
+     }
+ 
+-    void SetBundleName(const std::string& bundleName)
+-    {
+-        bundleName_ = bundleName;
+-    }
+-
+-    void SetModuleName(const std::string& moduleName)
+-    {
+-        moduleName_ = moduleName;
+-    }
+-
+     void RegisterCrownEventCallback(CrownEventCallback&& callback)
+     {
+         ACE_DCHECK(callback);
+@@ -343,6 +348,8 @@ private:
+ #else
+     void AttachView(std::shared_ptr<Window> window, AceViewPreview* view, double density, int32_t width, int32_t height,
+         UIEnvCallback callback);
++    void InitThemeManagerTask();
++    void InitEnvCallbackTask(UIEnvCallback callback);
+ #endif
+ 
+     RefPtr<AceViewPreview> aceView_ = nullptr;
+@@ -364,8 +371,6 @@ private:
+     mutable std::mutex cardFrontMutex_;
+     mutable std::mutex cardPipelineMutex_;
+     void* sharedRuntime_ = nullptr;
+-    std::string bundleName_;
+-    std::string moduleName_;
+     RefPtr<StagePkgContextInfo> PkgContextInfo_;
+     std::weak_ptr<OHOS::AbilityRuntime::Context> runtimeContext_;
+     std::unordered_set<std::string> resAdapterRecord_;
+diff --git a/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.cpp b/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.cpp
+index e0d57013d20..c7047f13e04 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.cpp
++++ b/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.cpp
+@@ -20,9 +20,15 @@
+ #include <memory>
+ 
+ #include "base/utils/utils.h"
+-#include "frameworks/base/log/log.h"
+ 
+-namespace OHOS::Ace::Sample {
++#ifdef __linux__
++#include <ctime>
++#endif
++#ifdef __APPLE__
++#include <mach/mach_time.h>
++#endif
++
++namespace OHOS::Ace {
+ 
+ namespace {
+ const std::map<int, KeyAction> ACTION_MAP = {
+@@ -83,8 +89,6 @@ void EventAdapter::Initialize(std::shared_ptr<GlfwRenderContext>& glfwRenderCont
+         }
+         if (keyEventCallback_ && RecognizeKeyEvent(key, action, mods)) {
+             keyEventCallback_(keyEvent_);
+-        } else {
+-            LOGW("Unrecognized key type.");
+         }
+     };
+     glfwRenderContext->OnKey(keyboardCbk);
+@@ -177,6 +181,28 @@ bool EventAdapter::RecognizeKeyEvent(int key, int action, int mods)
+     return true;
+ }
+ 
++OHOS::MMI::TimeStamp GetExactTime()
++{
++#ifdef __linux__
++    timespec ts;
++    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
++
++    return std::chrono::system_clock::time_point(
++        std::chrono::system_clock::duration(std::chrono::seconds(ts.tv_sec) + std::chrono::nanoseconds(ts.tv_nsec)));
++#elif defined(__APPLE__)
++    static mach_timebase_info_data_t info;
++    static std::once_flag flag;
++    std::call_once(flag, [] { mach_timebase_info(&info); });
++
++    auto nanos = (mach_absolute_time() * info.numer) / info.denom;
++
++    return std::chrono::steady_clock::time_point(
++        std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::nanoseconds(nanos)));
++#else
++    return std::chrono::high_resolution_clock::now();
++#endif
++}
++
+ void EventAdapter::RecognizePointerEvent(const TouchType type)
+ {
+     std::lock_guard lock(mouseMutex_);
+@@ -186,7 +212,7 @@ void EventAdapter::RecognizePointerEvent(const TouchType type)
+     pointerEvent_->screenX = 0;
+     pointerEvent_->screenY = 0;
+     pointerEvent_->type = type;
+-    pointerEvent_->time = std::chrono::high_resolution_clock::now();
++    pointerEvent_->time = GetExactTime();
+     pointerEvent_->size = sizeof(PointerEvent);
+     pointerEvent_->force = 0;
+     pointerEvent_->deviceId = 0;
+diff --git a/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.h b/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.h
+index a8247e44284..87fe74b89f7 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.h
++++ b/foundation/arkui/ace_engine/adapter/preview/entrance/samples/event_adapter.h
+@@ -38,7 +38,7 @@ using MMIKeyEventCallback = std::function<void(const std::shared_ptr<KeyEvent>&)
+ using MMIPointerEventCallback = std::function<void(const std::shared_ptr<PointerEvent>&)>;
+ using InspectorCallback = std::function<void(void)>;
+ 
+-namespace OHOS::Ace::Sample {
++namespace OHOS::Ace {
+ 
+ class EventAdapter : public Singleton<EventAdapter> {
+     DECLARE_SINGLETON(EventAdapter);
+diff --git a/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.cpp b/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.cpp
+index 02f4f4855d1..f49b3f62f47 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.cpp
++++ b/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.cpp
+@@ -44,6 +44,11 @@
+ #include "unicode/putil.h"
+ #endif
+ 
++#ifdef NG_BUILD
++#include "frameworks/bridge/declarative_frontend/ng/declarative_frontend_ng.h"
++#else
++#include "frameworks/bridge/declarative_frontend/declarative_frontend.h"
++#endif
+ #include "frameworks/simulator/common/include/context.h"
+ 
+ namespace OHOS::Ace {
+@@ -296,6 +301,7 @@ UIContentImpl::UIContentImpl(OHOS::AbilityRuntime::Context* context, void* runti
+         auto options = context->GetOptions();
+         bundleName_ = options.bundleName;
+         moduleName_ = options.moduleName;
++        context_ = context->weak_from_this();
+     }
+ }
+ 
+@@ -485,6 +491,7 @@ void UIContentImpl::Destroy()
+ {
+     LOGI("UIContentImpl: window destroy");
+     AceContainer::DestroyContainer(instanceId_);
++    rsWindow_ = nullptr;
+ }
+ 
+ uint32_t UIContentImpl::GetBackgroundColor()
+@@ -796,4 +803,23 @@ int32_t UIContentImpl::GetUIContentWindowID(int32_t instanceId)
+         "GetUIContentWindowID entry success instanceId:[%{public}d],windowId:[%{public}d]", instanceId, windowId);
+     return static_cast<int32_t>(windowId);
+ }
++
++napi_value UIContentImpl::GetUINapiContext()
++{
++    auto container = Platform::AceContainer::GetContainer(instanceId_);
++    ContainerScope scope(instanceId_);
++    napi_value result = nullptr;
++    auto frontend = container->GetFrontend();
++    CHECK_NULL_RETURN(frontend, result);
++    if (frontend->GetType() == FrontendType::DECLARATIVE_JS) {
++#ifdef NG_BUILD
++        auto declarativeFrontend = AceType::DynamicCast<DeclarativeFrontendNG>(frontend);
++#else
++        auto declarativeFrontend = AceType::DynamicCast<DeclarativeFrontend>(frontend);
++#endif
++        CHECK_NULL_RETURN(declarativeFrontend, result);
++        return declarativeFrontend->GetContextValue();
++    }
++    return result;
++}
+ } // namespace OHOS::Ace
+diff --git a/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.h b/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.h
+index c22d6c1f501..ff810ccd771 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.h
++++ b/foundation/arkui/ace_engine/adapter/preview/entrance/ui_content_impl.h
+@@ -164,6 +164,8 @@ public:
+ 
+     void SetStatusBarItemColor(uint32_t color) override;
+ 
++    napi_value GetUINapiContext() override;
++
+     void EnableContainerModalGesture(bool isEnable) override {};
+ 
+     bool GetContainerFloatingTitleVisible() override
+@@ -182,6 +184,7 @@ public:
+     }
+ 
+     void UpdateSingleHandTransform(const OHOS::Rosen::SingleHandTransform& transform) override {};
++
+ private:
+     UIContentErrorCode InitializeInner(
+         OHOS::Rosen::Window* window, const std::string& contentInfo, napi_value storage, bool isNamedRouter);
+diff --git a/foundation/arkui/ace_engine/adapter/preview/osal/dynamic_module_helper.cpp b/foundation/arkui/ace_engine/adapter/preview/osal/dynamic_module_helper.cpp
+index af27be123ca..3bee8983504 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/osal/dynamic_module_helper.cpp
++++ b/foundation/arkui/ace_engine/adapter/preview/osal/dynamic_module_helper.cpp
+@@ -43,7 +43,11 @@ const std::string DYNAMIC_MODULE_LIB_POSTFIX = ".dylib";
+ #else
+ const std::string COMPATIABLE_LIB = "libace_compatible_components.z.so";
+ const std::string DYNAMIC_MODULE_LIB_PREFIX = "libarkui_";
++#ifdef PREVIEW
++const std::string DYNAMIC_MODULE_LIB_POSTFIX = ".so";
++#else
+ const std::string DYNAMIC_MODULE_LIB_POSTFIX = ".z.so";
++#endif 
+ #endif
+ } // namespace
+ DynamicModuleHelper& DynamicModuleHelper::GetInstance()
+diff --git a/foundation/arkui/ace_engine/adapter/preview/sdk/sharedlib_config.gni b/foundation/arkui/ace_engine/adapter/preview/sdk/sharedlib_config.gni
+index d4cf2ccdf8e..1047ca0460f 100644
+--- a/foundation/arkui/ace_engine/adapter/preview/sdk/sharedlib_config.gni
++++ b/foundation/arkui/ace_engine/adapter/preview/sdk/sharedlib_config.gni
+@@ -769,6 +769,64 @@ if (defined(use_rosen_drawing) && use_rosen_drawing) {
+   ]
+ }
+ 
++if (use_mac || use_mingw_win || use_linux) {
++  common_bin += [
++    {
++      label = "//third_party/zlib:shared_libz"
++      subsystem_name = "thirdparty"
++      part_name = "zlib"
++      lib_names = [ "shared_libz" ]
++    },
++    {
++      label = "//foundation/graphic/graphic_2d/rosen/modules/platform:impl_eventhandler"
++      subsystem_name = "graphic"
++      part_name = "graphic_2d"
++    },
++    {
++      label = "//third_party/brotli:brotli_shared"
++      subsystem_name = "thirdparty"
++      part_name = "brotli"
++      lib_names = [ "brotli_shared" ]
++    },
++  ]
++}
++
++if (use_linux) {
++  common_bin += [
++    {
++      label = "//foundation/arkui/ace_engine/build:libevent_adapter"
++      subsystem_name = "arkui"
++      part_name = "ace_engine"
++    },
++    {
++      label = "//third_party/cares:c_ares"
++      subsystem_name = "thirdparty"
++      part_name = "cares"
++      lib_names = [ "c_ares" ]
++    },
++    {
++      label = "//third_party/openhitls:openhitls_bsl"
++      subsystem_name = "thirdparty"
++      part_name = "openhitls"
++    },
++    {
++      label = "//third_party/openhitls:openhitls_crypto"
++      subsystem_name = "thirdparty"
++      part_name = "openhitls"
++    },
++    {
++      label = "//third_party/openhitls:openhitls_pki"
++      subsystem_name = "thirdparty"
++      part_name = "openhitls"
++    },
++    {
++      label = "//third_party/openhitls:openhitls_tls"
++      subsystem_name = "thirdparty"
++      part_name = "openhitls"
++    },
++  ]
++}
++
+ if (use_mac || use_mingw_win) {
+   common_bin += [
+     {
+diff --git a/foundation/arkui/ace_engine/build/BUILD.gn b/foundation/arkui/ace_engine/build/BUILD.gn
+index 7db44b8c2a9..4ec8ce05014 100644
+--- a/foundation/arkui/ace_engine/build/BUILD.gn
++++ b/foundation/arkui/ace_engine/build/BUILD.gn
+@@ -177,12 +177,27 @@ ohos_shared_library("libace_compatible") {
+     deps += [ "$ace_root/build:libace_static_mac" ]
+   } else if (use_linux) {
+     deps += [ "$ace_root/build:libace_static_linux" ]
++    deps += [ "$ace_root/frameworks/bridge/arkts_frontend:arkts_frontend_linux" ]
+   }
+   public_external_deps = external_deps
+   part_name = ace_engine_part
+   subsystem_name = ace_engine_subsystem
+ }
+ 
++external_deps = []
++public_external_deps = []
++if (use_linux || use_mingw_win || use_mac) {
++  external_deps += [
++    "glfw:glfw",
++    "graphic_2d:libglfw_render_context",
++    "graphic_2d:librender_service_client",
++  ]
++
++  public_external_deps += external_deps
++  part_name = ace_engine_part
++  subsystem_name = ace_engine_subsystem
++}
++
+ ohos_shared_library("libace_compatible_components") {
+   deps = [ ":libace_compatible" ]
+   if (is_ohos) {
+@@ -198,6 +213,33 @@ ohos_shared_library("libace_compatible_components") {
+   subsystem_name = ace_engine_subsystem
+ }
+ 
++if (is_ohos) {
++  group("libevent_adapter") {
++    # fake target for ohos
++  }
++} else if (use_linux || use_mingw_win || use_mac) {
++  ohos_shared_library("libevent_adapter") {
++    sources = [ "../adapter/preview/entrance/samples/event_adapter.cpp" ]
++    include_dirs = [
++      "$ace_root",
++      "$ace_root/frameworks",
++      "$ace_root/interfaces/inner_api/ace_kit/include",
++    ]
++
++    external_deps += [
++      "glfw:glfw",
++      "graphic_2d:libglfw_render_context",
++      "graphic_2d:librender_service_client",
++    ]
++
++    cflags = [ "-std=c++17" ]
++
++    public_external_deps += external_deps
++    part_name = ace_engine_part
++    subsystem_name = ace_engine_subsystem
++  }
++}
++
+ if (!is_asan && ace_engine_feature_enable_libace) {
+   ohos_shared_library("libace") {
+     external_deps = []
+@@ -222,7 +264,7 @@ if (!is_asan && ace_engine_feature_enable_libace) {
+     } else if (use_linux) {
+       deps += [ "$ace_root/build:libace_static_linux" ]
+     }
+-    public_external_deps = external_deps
++    public_external_deps += external_deps
+     part_name = ace_engine_part
+     subsystem_name = ace_engine_subsystem
+   }
+diff --git a/foundation/arkui/ace_engine/bundle.json b/foundation/arkui/ace_engine/bundle.json
+index a8658f84e94..4ac9a4f2fbe 100644
+--- a/foundation/arkui/ace_engine/bundle.json
++++ b/foundation/arkui/ace_engine/bundle.json
+@@ -124,7 +124,8 @@
+                 "request",
+                 "qrcodegen",
+                 "sdk",
+-                "screenlock_mgr"
++                "screenlock_mgr",
++                "glfw"
+             ],
+             "third_party": []
+         },
+@@ -238,6 +239,15 @@
+                     },
+                     "name": "//foundation/arkui/ace_engine/build:libace_compatible"
+                 },
++                {
++                    "header": {
++                        "header_base": "//foundation/arkui/ace_engine/",
++                        "header_files": [
++                            "adapter/preview/entrance/sample/event_adapter.h"
++                        ]
++                    },
++                    "name": "//foundation/arkui/ace_engine/build:libevent_adapter"
++                },
+                 {
+                     "header": {
+                         "header_base": "//foundation/arkui/ace_engine/frameworks/core/common/",
+diff --git a/foundation/arkui/ace_engine/frameworks/core/common/container.cpp b/foundation/arkui/ace_engine/frameworks/core/common/container.cpp
+index 09b0158b870..4a704589513 100644
+--- a/foundation/arkui/ace_engine/frameworks/core/common/container.cpp
++++ b/foundation/arkui/ace_engine/frameworks/core/common/container.cpp
+@@ -21,6 +21,7 @@
+ #include "base/utils/utils.h"
+ #include "base/subwindow/subwindow_manager.h"
+ #include "core/common/ace_engine.h"
++#include "core/common/container_scope.h"
+ #ifdef PLUGIN_COMPONENT_SUPPORTED
+ #include "core/common/plugin_manager.h"
+ #endif
+@@ -374,7 +375,7 @@ int32_t Container::GenerateId<PLUGIN_SUBCONTAINER>()
+ #ifdef PLUGIN_COMPONENT_SUPPORTED
+     return PluginManager::GetInstance().GetPluginSubContainerId();
+ #else
+-    return INSTANCE_ID_UNDEFINED;
++    return DEFAULT_ID;
+ #endif
+ }
+ 
+diff --git a/foundation/arkui/ace_engine/frameworks/core/common/container.h b/foundation/arkui/ace_engine/frameworks/core/common/container.h
+index 48a2ce83b05..a3240cfeca8 100755
+--- a/foundation/arkui/ace_engine/frameworks/core/common/container.h
++++ b/foundation/arkui/ace_engine/frameworks/core/common/container.h
+@@ -857,14 +857,14 @@ protected:
+     // for common handler
+     RefPtr<ContainerHandler> containerHandler_;
+     RefPtr<DisplayInfoUtils> displayManager_ = AceType::MakeRefPtr<DisplayInfoUtils>();
+-
+-private:
+     std::string bundleName_;
+     std::string moduleName_;
+     std::string bundlePath_;
+     std::string filesDataPath_;
+     std::string tempDir_;
+     std::string srcEntrance_;
++
++private:
+     bool usePartialUpdate_ = false;
+     DisplayOrientation displayOrientation_ = DisplayOrientation::PORTRAIT;
+     Settings settings_;
+diff --git a/foundation/arkui/ace_engine/frameworks/core/common/container_consts.h b/foundation/arkui/ace_engine/frameworks/core/common/container_consts.h
+index ef32dc7a427..8c1bb1b649b 100755
+--- a/foundation/arkui/ace_engine/frameworks/core/common/container_consts.h
++++ b/foundation/arkui/ace_engine/frameworks/core/common/container_consts.h
+@@ -39,6 +39,12 @@ constexpr int32_t MIN_PLUGIN_SUBCONTAINER_ID = PLUGIN_SUBCONTAINER * CONTAINER_I
+ constexpr int32_t MIN_SUBCONTAINER_ID = COMPONENT_SUBWINDOW_CONTAINER * CONTAINER_ID_DIVIDE_SIZE;
+ constexpr int32_t MIN_PA_SERVICE_ID = PA_SERVICE_CONTAINER * CONTAINER_ID_DIVIDE_SIZE;
+ constexpr int32_t WINDOW_FREE_CONTAINER_ID = WINDOW_FREE_CONTAINER * CONTAINER_ID_DIVIDE_SIZE;
++// preview not support multi-instance, always using default instance id 0.
++#if defined(PREVIEW)
++constexpr int32_t DEFAULT_ID = 0;
++#else
++constexpr int32_t DEFAULT_ID = INSTANCE_ID_UNDEFINED;
++#endif
+ } // namespace OHOS::Ace
+ 
+ #endif // FOUNDATION_ACE_FRAMEWORKS_CORE_COMMON_CONTAINER_CONSTS_H
+diff --git a/foundation/arkui/ace_engine/frameworks/core/common/container_scope.cpp b/foundation/arkui/ace_engine/frameworks/core/common/container_scope.cpp
+index 9f11ff60e2a..0d91cd7b9cb 100644
+--- a/foundation/arkui/ace_engine/frameworks/core/common/container_scope.cpp
++++ b/foundation/arkui/ace_engine/frameworks/core/common/container_scope.cpp
+@@ -23,13 +23,6 @@
+ 
+ namespace OHOS::Ace {
+ namespace {
+-// preview not support multi-instance, always using default instance id 0.
+-#if defined(PREVIEW)
+-constexpr int32_t DEFAULT_ID = 0;
+-#else
+-constexpr int32_t DEFAULT_ID = INSTANCE_ID_UNDEFINED;
+-#endif
+-
+ std::shared_mutex mutex_;
+ std::set<int32_t> containerSet_;
+ thread_local int32_t currentLocalId_(DEFAULT_ID);
+@@ -85,13 +78,13 @@ int32_t ContainerScope::DefaultId()
+         std::shared_lock<std::shared_mutex> lock(mutex_);
+         return *containerSet_.rbegin();
+     }
+-    return INSTANCE_ID_UNDEFINED;
++    return DEFAULT_ID;
+ }
+ 
+ int32_t ContainerScope::SingletonId()
+ {
+     if (ContainerCount() != 1) {
+-        return INSTANCE_ID_UNDEFINED;
++        return DEFAULT_ID;
+     }
+     std::shared_lock<std::shared_mutex> lock(mutex_);
+     return *containerSet_.begin();
+@@ -111,7 +104,7 @@ int32_t ContainerScope::SafelyId()
+ {
+     uint32_t containerCount = ContainerCount();
+     if (containerCount == 0) {
+-        return INSTANCE_ID_UNDEFINED;
++        return DEFAULT_ID;
+     }
+     if (containerCount == 1) {
+         return SingletonId();
+@@ -135,7 +128,7 @@ std::pair<int32_t, InstanceIdGenReason> ContainerScope::CurrentIdWithReason()
+     }
+     uint32_t containerCount = ContainerCount();
+     if (containerCount == 0) {
+-        return { INSTANCE_ID_UNDEFINED, InstanceIdGenReason::UNDEFINED };
++        return { DEFAULT_ID, InstanceIdGenReason::UNDEFINED };
+     }
+     if (containerCount == 1) {
+         return { SingletonId(), InstanceIdGenReason::SINGLETON };
+@@ -213,10 +206,10 @@ void ContainerScope::RemoveAndCheck(int32_t id)
+ {
+     Remove(id);
+     if (RecentActiveId() == id) {
+-        UpdateRecentActive(INSTANCE_ID_UNDEFINED);
++        UpdateRecentActive(DEFAULT_ID);
+     }
+     if (RecentForegroundId() == id) {
+-        UpdateRecentForeground(INSTANCE_ID_UNDEFINED);
++        UpdateRecentForeground(DEFAULT_ID);
+     }
+ }
+ } // namespace OHOS::Ace
+diff --git a/foundation/arkui/ace_engine/frameworks/core/pipeline_ng/pipeline_context.cpp b/foundation/arkui/ace_engine/frameworks/core/pipeline_ng/pipeline_context.cpp
+index 4f9e634ccc5..e8767c907f4 100755
+--- a/foundation/arkui/ace_engine/frameworks/core/pipeline_ng/pipeline_context.cpp
++++ b/foundation/arkui/ace_engine/frameworks/core/pipeline_ng/pipeline_context.cpp
+@@ -870,6 +870,7 @@ void PipelineContext::ReloadNodesResource()
+ void PipelineContext::FlushVsync(uint64_t nanoTimestamp, uint64_t frameCount)
+ {
+     CHECK_RUN_ON(UI);
++    CHECK_NULL_VOID(rootNode_);
+     if (IsDestroyed()) {
+         LOGW("Cannot flush vsync as the pipeline context is destroyed.");
+         return;
+diff --git a/arkcompiler/ets_runtime/BUILD.gn b/arkcompiler/ets_runtime/BUILD.gn
+index 0bdd99630..8014f54fa 100644
+--- a/arkcompiler/ets_runtime/BUILD.gn
++++ b/arkcompiler/ets_runtime/BUILD.gn
+@@ -594,6 +594,9 @@ config("ark_jsruntime_common_config") {
+       "PANDA_TARGET_LINUX",
+       "PANDA_USE_FUTEX",
+     ]
++    if (!ark_standalone_build && current_cpu == "x64") {
++      defines += [ "PANDA_TARGET_LINUX_PREVIEWER" ]
++    }
+   } else if (is_mingw) {
+     cflags_cc += [
+       "-std=c++17",
+diff --git a/arkcompiler/ets_runtime/ecmascript/module/tests/BUILD.gn b/arkcompiler/ets_runtime/ecmascript/module/tests/BUILD.gn
+index 1b15eeca7..9fd484ca8 100644
+--- a/arkcompiler/ets_runtime/ecmascript/module/tests/BUILD.gn
++++ b/arkcompiler/ets_runtime/ecmascript/module/tests/BUILD.gn
+@@ -160,7 +160,9 @@ host_unittest_action("ModuleTest") {
+     test_abc_dir = rebase_path(target_out_dir)
+   }
+   defines = [ "MODULE_ABC_PATH=\"${test_abc_dir}/\"" ]
+-
++  if (!ark_standalone_build && current_cpu == "x64") {
++    defines += [ "PANDA_TARGET_LINUX_PREVIEWER" ]
++  }
+   # hiviewdfx libraries
+   external_deps = hiviewdfx_ext_deps
+   deps += hiviewdfx_deps
+diff --git a/arkcompiler/ets_runtime/ecmascript/module/tests/ecma_module_test.cpp b/arkcompiler/ets_runtime/ecmascript/module/tests/ecma_module_test.cpp
+index d6ac9abb2..0d7c60d7a 100644
+--- a/arkcompiler/ets_runtime/ecmascript/module/tests/ecma_module_test.cpp
++++ b/arkcompiler/ets_runtime/ecmascript/module/tests/ecma_module_test.cpp
+@@ -1092,7 +1092,11 @@ HWTEST_F_L0(EcmaModuleTest, ParseAbcPathAndOhmUrl)
+     instance->SetModuleName("moduleName");
+     CString inputFileName = "moduleName/ets/pages/index.abc";
+     CString outFileName = "";
++#ifndef PANDA_TARGET_LINUX_PREVIEWER
+     CString res1 = "com.bundleName.test/moduleName/ets/pages/index";
++#else
++    CString res1 = "com.bundleName.test/moduleName/ets/moduleName/ets/pages/index";
++#endif
+     CString entryPoint;
+     ModulePathHelper::ParseAbcPathAndOhmUrl(instance, inputFileName, outFileName, entryPoint);
+     EXPECT_EQ(entryPoint, res1);
+@@ -1101,6 +1105,9 @@ HWTEST_F_L0(EcmaModuleTest, ParseAbcPathAndOhmUrl)
+     // new pages url
+     inputFileName = "@bundle:com.bundleName.test/moduleName/ets/pages/index.abc";
+     ModulePathHelper::ParseAbcPathAndOhmUrl(instance, inputFileName, outFileName, entryPoint);
++#ifdef PANDA_TARGET_LINUX_PREVIEWER
++    res1 = "com.bundleName.test/moduleName/ets/pages/index";
++#endif
+     EXPECT_EQ(entryPoint, res1);
+     EXPECT_EQ(outFileName, "/data/storage/el1/bundle/moduleName/ets/modules.abc");
+ 
+@@ -1159,7 +1166,11 @@ HWTEST_F_L0(EcmaModuleTest, ParseAbcPathAndOhmUrl)
+ 
+     inputFileName = "com.bundleName.test/moduleName/ets/pages/index";
+     CString outRes3 = "/data/storage/el1/bundle/moduleName/ets/modules.abc";
++#ifndef PANDA_TARGET_LINUX_PREVIEWER
+     CString res6 = "com.bundleName.test/com.bundleName.test/moduleName/ets/pages/index";
++#else
++    CString res6 = "com.bundleName.test/moduleName/ets/com.bundleName.test/moduleName/ets/pages/index";
++#endif
+     ModulePathHelper::ParseAbcPathAndOhmUrl(instance, inputFileName, outFileName, entryPoint);
+     EXPECT_EQ(entryPoint, res6);
+     EXPECT_EQ(outFileName, outRes3);
+diff --git a/arkcompiler/ets_runtime/ecmascript/napi/jsnapi_expo.cpp b/arkcompiler/ets_runtime/ecmascript/napi/jsnapi_expo.cpp
+index 6bbc3e53f..88da4cbaf 100644
+--- a/arkcompiler/ets_runtime/ecmascript/napi/jsnapi_expo.cpp
++++ b/arkcompiler/ets_runtime/ecmascript/napi/jsnapi_expo.cpp
+@@ -4675,7 +4675,7 @@ void JSNApi::SetAssetPath(EcmaVM *vm, const std::string &assetPath)
+ {
+     ecmascript::CString path = assetPath.c_str();
+     // check input assetPath
+-#if !defined(PANDA_TARGET_WINDOWS) && !defined(PANDA_TARGET_MACOS)
++#if !defined(PANDA_TARGET_WINDOWS) && !defined(PANDA_TARGET_MACOS) && !defined(PANDA_TARGET_LINUX_PREVIEWER)
+     if (!ModulePathHelper::ValidateAbcPath(path, ecmascript::ValidateFilePath::ABC)) {
+         LOG_FULL(FATAL) << "Invalid input assetPath: " << assetPath.c_str();
+     }
+diff --git a/arkcompiler/ets_runtime/ecmascript/platform/common/module.cpp b/arkcompiler/ets_runtime/ecmascript/platform/common/module.cpp
+index 518db3fee..a7fde470d 100644
+--- a/arkcompiler/ets_runtime/ecmascript/platform/common/module.cpp
++++ b/arkcompiler/ets_runtime/ecmascript/platform/common/module.cpp
+@@ -20,8 +20,31 @@
+ namespace panda::ecmascript {
+ CString GetOutEntryPoint(EcmaVM *vm, const CString &inputFileName)
+ {
++#ifndef PANDA_TARGET_LINUX_PREVIEWER
+     // inputFileName: moduleName/ets/xxx/xxx.abc
+     return base::ConcatToCString(vm->GetBundleName(), PathHelper::SLASH_TAG, inputFileName);
++#else
++    CString outEntryPoint;
++    CString o = base::ConcatToCString(vm->GetBundleName(), PathHelper::SLASH_TAG, inputFileName);
++    // if the inputFileName starts with '.test', the preview test page is started.
++    // in this case, the path ets does not need to be combined.
++    // inputFileName: .test/xxx/xxx.abc
++    if (StringHelper::StringStartWith(inputFileName, ModulePathHelper::PREVIER_TEST_DIR)) {
++        outEntryPoint = base::ConcatToCString(vm->GetBundleName(), PathHelper::SLASH_TAG, vm->GetModuleName(),
++            PathHelper::SLASH_TAG, inputFileName);
++    } else {
++        // inputFileName: xxx/xxx.abc
++        // Old style (SDK 5.X.X) entry point URL, like "ets/pages/Index"
++        //outEntryPoint = base::ConcatToCString(vm->GetBundleName(), PathHelper::SLASH_TAG, vm->GetModuleName(),
++        //    ModulePathHelper::MODULE_DEFAULE_ETS.data(), inputFileName);
++        // New style (SDK 6.X.X), example " &entry/src/main/ets/pages/Index&"
++        outEntryPoint = base::ConcatToCString("&", vm->GetModuleName(),
++            ModulePathHelper::PHYCICAL_FILE_PATH,
++            ModulePathHelper::MODULE_DEFAULE_ETS.data(),
++            inputFileName.substr(0, inputFileName.length() - ModulePathHelper::EXT_NAME_ABC_LEN), "&");
++    }
++    return outEntryPoint;
++#endif
+ }
+ 
+ CString GetBaseFileName(EcmaVM *vm, [[maybe_unused]] CString &moduleRequestName, CString &baseFileName,
+diff --git a/third_party/glfw/BUILD.gn b/third_party/glfw/BUILD.gn
+index eff1577..43faeaf 100644
+--- a/third_party/glfw/BUILD.gn
++++ b/third_party/glfw/BUILD.gn
+@@ -16,6 +16,10 @@ import("//third_party/glfw/glfw_ace_config.gni")
+ 
+ config("glfw_inner_headers") {
+   include_dirs = [ "include" ]
++
++  if (current_os == "mac") {
++    include_dirs += [ "deps" ]
++  }
+ }
+ 
+ config("glfw_config_mac") {
+@@ -77,6 +81,7 @@ ohos_shared_library("glfw") {
+     ]
+   }
+   if (current_os == "mac") {
++    public += [ "deps/glad/gl.h" ]
+     defines += ace_mac_defines
+     sources += [
+       "src/cocoa_init.m",
+diff --git a/third_party/glfw/bundle.json b/third_party/glfw/bundle.json
+index 85dbb15..9b6b099 100644
+--- a/third_party/glfw/bundle.json
++++ b/third_party/glfw/bundle.json
+@@ -29,10 +29,15 @@
+             "sub_component": [],
+             "inner_kits": [
+                 {
+-                    "name": "//third_party/glfw:glfw"
++                    "name": "//third_party/glfw:glfw",
++                    "type": "so",
++                    "header": {
++                      "header_files": [ "GLFW/glfw3.h" ],
++                      "header_base": "//third_party/glfw/include"
++                    }
+                 }
+             ],
+             "test": []
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/ide/tools/previewer/BUILD.gn b/ide/tools/previewer/BUILD.gn
+index 1172d7e..e501a67 100644
+--- a/ide/tools/previewer/BUILD.gn
++++ b/ide/tools/previewer/BUILD.gn
+@@ -164,7 +164,7 @@ ohos_copy("copy_ide_library") {
+   deps += [ "jsapp/rich/external:ide_extension" ]
+   out_path = get_label_info("jsapp/rich/external:ide_extension", "root_out_dir")
+   sources += [ out_path + "/ide/previewer/libide_extension" + suffix ]
+-
++  sources += [ rebase_path("config/config.json", root_out_dir) ]
+   outputs = [ target_out_dir + "/previewer/common/bin/{{source_file_part}}" ]
+   module_source_dir = target_out_dir + "/previewer/common/bin/"
+   module_install_name = ""
+diff --git a/ide/tools/previewer/README.md b/ide/tools/previewer/README.md
+index c6b5368..7e11e18 100644
+--- a/ide/tools/previewer/README.md
++++ b/ide/tools/previewer/README.md
+@@ -9,6 +9,18 @@ The Previewer is a component that empowers the DevEco Studio Previewer to levera
+ ![](figures/Previewer-Component-Architecture.PNG "Previewer Component Architecture")
+ 
+ To start with, the DevEco Studio Previewer launches the Previewer component through the command line and passes to it startup parameters such as the ArkTS build product path and preview specifications. When starting up, the Previewer component launches the ArkUI rendering engine, which then renders pages based on the startup parameters and delivers preview images for the DevEco Studio Previewer. When page information changes, the DevEco Studio Previewer sends page refresh commands through the named pipe to the Previewer component. Based on the received commands, the Previewer component calls the ArkUI processing APIs to refresh and render the pages and deliver the images.
++
++The Previewer can be started without the DevEco Studio and a project. Just with any hap file.
++
++For example on Linux PC:
++
++```
++./Previewer -gui -hap ~/MyApplication.hap
++```
++You will see GUI Window with application content, and you can interacts with application by a mouse and a keyboard.
++
++The default parameters are into config.json file. You can change it if needs.
++
+ ## Directory Structure
+ 
+ The source code of the Previewer component is stored in **/ide_previewer**. The following shows the directory structure.
+diff --git a/ide/tools/previewer/RichPreviewer.cpp b/ide/tools/previewer/RichPreviewer.cpp
+index 82cac14..fe36b86 100644
+--- a/ide/tools/previewer/RichPreviewer.cpp
++++ b/ide/tools/previewer/RichPreviewer.cpp
+@@ -28,6 +28,7 @@
+ #include "SharedData.h"
+ #include "TraceTool.h"
+ #include "VirtualScreenImpl.h"
++#include "FileSystem.h"
+ 
+ static const int NOTIFY_INTERVAL_TIME = 1000; // Unit millisecond
+ 
+@@ -109,18 +110,24 @@ int main(int argc, char* argv[])
+     if (ret >= 0) {
+         return ret;
+     }
++    if (parser.IsStandaloneMode()) {
++        chdir(FileSystem::GetExecutablePath().c_str());
++    }
+     InitSharedData();
+     if (parser.IsSet("s")) {
+         CommandLineInterface::GetInstance().Init(parser.Value("s"));
+     }
+-
+-    TraceTool::GetInstance().HandleTrace("Enter the main function");
+-
+-    std::thread commandThead(ProcessCommand);
+-    commandThead.detach();
++    if (!parser.IsStandaloneMode()) {
++        TraceTool::GetInstance().HandleTrace("Enter the main function");
++    }
++    std::thread commandThread(ProcessCommand);
+     VirtualScreenImpl::GetInstance().InitResolution();
+-    ApplyConfig();
++    if (!parser.IsStandaloneMode()) {
++        ApplyConfig();
++    }
+     JsAppImpl::GetInstance().InitJsApp();
++    Interrupter::Interrupt();
++    commandThread.join();
+     std::this_thread::sleep_for(std::chrono::milliseconds(500)); // sleep 500 ms
+     return 0;
+ }
+diff --git a/ide/tools/previewer/bundle.json b/ide/tools/previewer/bundle.json
+index 5bde209..15d57a2 100644
+--- a/ide/tools/previewer/bundle.json
++++ b/ide/tools/previewer/bundle.json
+@@ -33,7 +33,8 @@
+             "bounds_checking_function",
+             "libjpeg-turbo",
+             "libwebsockets",
+-            "cJSON"
++            "cJSON",
++            "glfw"
+           ]
+       },
+       "build": {
+diff --git a/ide/tools/previewer/jsapp/BUILD.gn b/ide/tools/previewer/jsapp/BUILD.gn
+index dcd728e..4cc8504 100644
+--- a/ide/tools/previewer/jsapp/BUILD.gn
++++ b/ide/tools/previewer/jsapp/BUILD.gn
+@@ -54,17 +54,17 @@ ohos_source_set("jsapp_rich") {
+   deps = [
+     "rich/external:ide_extension",
+     "//third_party/libwebsockets:websockets_static",
++    "//third_party/glfw:glfw",
+   ]
+ 
+   external_deps = [
+     "ace_engine:libace_compatible",
++    "ace_engine:libevent_adapter",
+     "graphic_2d:libglfw_render_context",
+     "graphic_2d:librender_service_client",
+     "window_manager:previewer_window",
+   ]
+-  if (platform != "linux_x64") {
+-    external_deps += [ "ability_runtime:ability_simulator" ]
+-  }
++  external_deps += [ "ability_runtime:ability_simulator" ]
+   part_name = "previewer"
+   subsystem_name = "ide"
+ }
+diff --git a/ide/tools/previewer/jsapp/rich/JsAppImpl.cpp b/ide/tools/previewer/jsapp/rich/JsAppImpl.cpp
+index 75a5f03..d187916 100644
+--- a/ide/tools/previewer/jsapp/rich/JsAppImpl.cpp
++++ b/ide/tools/previewer/jsapp/rich/JsAppImpl.cpp
+@@ -35,10 +35,11 @@
+ #include "ClipboardHelper.h"
+ #include "CommandLineInterface.h"
+ #include "adapter/preview/entrance/ui_content_impl.h"
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+ #include "options.h"
+ #include "simulator.h"
+ #endif
++#include "samples/event_adapter.h"
+ #include <fstream>
+ 
+ using namespace OHOS;
+@@ -65,7 +66,7 @@ OHOS::sptr<PreviewerListener> listener = nullptr;
+ 
+ JsAppImpl::JsAppImpl() noexcept : ability(nullptr), isStop(false)
+ {
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+     windowModel = std::make_shared<OHOS::Previewer::PreviewerWindowModel>();
+ #endif
+ }
+@@ -81,15 +82,19 @@ JsAppImpl& JsAppImpl::GetInstance()
+ void JsAppImpl::Start()
+ {
+     VirtualScreenImpl::GetInstance().InitVirtualScreen();
+-    VirtualScreenImpl::GetInstance().InitAll(pipeName, pipePort);
++    bool standaloneMode = CommandParser::GetInstance().IsStandaloneMode();
++    if (!standaloneMode) {
++        VirtualScreenImpl::GetInstance().InitAll(pipeName, pipePort);
++    }
+     isFinished = false;
+     ILOG("Start run js app");
+-    OHOS::AppExecFwk::EventHandler::SetMainThreadId(std::this_thread::get_id());
++    Ide::EventHandler::SetMainThreadId(std::this_thread::get_id());
+     RunJsApp();
+     ILOG("Js app run finished");
+-    while (!isStop) {
++    while (!isStop &&
++           !(isGUI ? glfwRenderContext->WindowShouldClose() : false)) {
+         // Execute all tasks in the main thread
+-        OHOS::AppExecFwk::EventHandler::Run();
++        Ide::EventHandler::Run();
+         glfwRenderContext->PollEvents();
+         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+     }
+@@ -139,7 +144,7 @@ void JsAppImpl::OrientationChanged(std::string commandOrientation)
+     ILOG("OrientationChanged: %s %d %d %f", orientation.c_str(), aceRunArgs.deviceWidth,
+          aceRunArgs.deviceHeight, aceRunArgs.deviceConfig.density);
+     if (ability != nullptr) {
+-        OHOS::AppExecFwk::EventHandler::PostTask([this]() {
++        Ide::EventHandler::PostTask([this]() {
+             glfwRenderContext->SetWindowSize(width, height);
+         });
+         ability->SurfaceChanged(aceRunArgs.deviceConfig.orientation, aceRunArgs.deviceConfig.density,
+@@ -215,11 +220,29 @@ void JsAppImpl::RunJsApp()
+     OHOS::Previewer::PreviewerDisplay::GetInstance().SetFoldable(screenInfo.foldable);
+     OHOS::Previewer::PreviewerDisplay::GetInstance().SetFoldStatus(ConvertFoldStatus(screenInfo.foldStatus));
+     InitGlfwEnv();
+-    Platform::AcePreviewHelper::GetInstance()->SetCallbackOfPostTask(AppExecFwk::EventHandler::PostTask);
++    Platform::AcePreviewHelper::GetInstance()->SetCallbackOfPostTask(Ide::EventHandler::PostTask);
+     Platform::AcePreviewHelper::GetInstance()->
+-        SetCallbackOfIsCurrentRunnerThread(AppExecFwk::EventHandler::IsCurrentRunnerThread);
+-    Platform::AcePreviewHelper::GetInstance()->SetCallbackOfSetClipboardData(ClipboardHelper::SetClipboardData);
+-    Platform::AcePreviewHelper::GetInstance()->SetCallbackOfGetClipboardData(ClipboardHelper::GetClipboardData);
++        SetCallbackOfIsCurrentRunnerThread(Ide::EventHandler::IsCurrentRunnerThread);
++
++    if (CommandParser::GetInstance().IsStandaloneMode()) {
++        Platform::AcePreviewHelper::GetInstance()->SetCallbackOfSetClipboardData(
++            [this](const std::string &data) {
++                if (!data.empty() && glfwRenderContext) {
++                    glfwRenderContext->SetClipboardData(data);
++                }
++            });
++        Platform::AcePreviewHelper::GetInstance()->SetCallbackOfGetClipboardData(
++            [this]() {
++                if (glfwRenderContext) {
++                    return glfwRenderContext->GetClipboardData();
++                }
++                return std::string("");
++            });
++    } else {
++        Platform::AcePreviewHelper::GetInstance()->SetCallbackOfSetClipboardData(ClipboardHelper::SetClipboardData);
++        Platform::AcePreviewHelper::GetInstance()->SetCallbackOfGetClipboardData(ClipboardHelper::GetClipboardData);
++    }
++
+     listener = new(std::nothrow) PreviewerListener();
+     if (!listener) {
+         ELOG("Memory allocation failed: listener.");
+@@ -250,7 +273,9 @@ void JsAppImpl::RunNormalAbility()
+     if (ability != nullptr) {
+         ability.reset();
+     }
+-    TraceTool::GetInstance().HandleTrace("Launch Js App");
++    if (!CommandParser::GetInstance().IsStandaloneMode()) {
++        TraceTool::GetInstance().HandleTrace("Launch Js App");
++    }
+     ability = Platform::AceAbility::CreateInstance(aceRunArgs);
+     if (ability == nullptr) {
+         ELOG("JsApp::Run ability create failed.");
+@@ -268,7 +293,7 @@ void JsAppImpl::RunNormalAbility()
+     ability->InitEnv();
+ }
+ 
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+ void JsAppImpl::RunDebugAbility()
+ {
+     // init window params
+@@ -385,7 +410,7 @@ void JsAppImpl::SetSimulatorCommonParams(OHOS::AbilityRuntime::Options& options)
+         options.previewPath = fPath.substr(0, pos) + ".idea" + FileSystem::GetSeparator() + "previewer";
+         ILOG("previewPath info:%s", options.previewPath.c_str());
+     }
+-    options.postTask = AppExecFwk::EventHandler::PostTask;
++    options.postTask = Ide::EventHandler::PostTask;
+ }
+ 
+ std::shared_ptr<AppExecFwk::Configuration> JsAppImpl::UpdateConfiguration(OHOS::Ace::Platform::AceRunArgs& args)
+@@ -622,7 +647,7 @@ void JsAppImpl::ResolutionChanged(ResolutionParam& param, int32_t screenDensity,
+     SetResolutionParams(param.orignalWidth, param.orignalHeight, param.compressionWidth,
+         param.compressionHeight, screenDensity);
+     if (isDebug && debugServerPort >= 0) {
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+         SetWindowParams();
+         OHOS::Ace::ViewportConfig config;
+         config.SetSize(windowModel->originWidth, windowModel->originHeight);
+@@ -636,7 +661,7 @@ void JsAppImpl::ResolutionChanged(ResolutionParam& param, int32_t screenDensity,
+             return;
+         }
+         InitAvoidAreas(window);
+-        OHOS::AppExecFwk::EventHandler::PostTask([this]() {
++        Ide::EventHandler::PostTask([this]() {
+             glfwRenderContext->SetWindowSize(aceRunArgs.deviceWidth, aceRunArgs.deviceHeight);
+         });
+         simulator->UpdateConfiguration(*(UpdateConfiguration(aceRunArgs).get()));
+@@ -645,7 +670,7 @@ void JsAppImpl::ResolutionChanged(ResolutionParam& param, int32_t screenDensity,
+     } else {
+         if (ability != nullptr) {
+             InitAvoidAreas(ability->GetWindow());
+-            OHOS::AppExecFwk::EventHandler::PostTask([this]() {
++            Ide::EventHandler::PostTask([this]() {
+                 glfwRenderContext->SetWindowSize(aceRunArgs.deviceWidth, aceRunArgs.deviceHeight);
+             });
+             ability->SurfaceChanged(aceRunArgs.deviceConfig.orientation, aceRunArgs.deviceConfig.density,
+@@ -846,11 +871,27 @@ void JsAppImpl::LoadDocument(const std::string filePath,
+          ((params.colorMode == ColorMode::DARK) ? "dark" : "light"),
+          ((params.orientation == DeviceOrientation::LANDSCAPE) ? "landscape" : "portrait"),
+         GetDeviceTypeName(params.deviceType).c_str());
+-    OHOS::AppExecFwk::EventHandler::PostTask([this]() {
++    Ide::EventHandler::PostTask([this]() {
+         glfwRenderContext->SetWindowSize(aceRunArgs.deviceWidth, aceRunArgs.deviceHeight);
+     });
+ 
+     if (ability != nullptr) {
++        OHOS::Ace::Platform::SystemParams params;
++        SetSystemParams(params, previewContext);
++        ILOG("LoadDocument params is density: %f region: %s language: %s deviceWidth: %d\
++             deviceHeight: %d isRound:%d colorMode:%s orientation: %s deviceType: %s",
++             params.density,
++             params.region.c_str(),
++             params.language.c_str(),
++             params.deviceWidth,
++             params.deviceHeight,
++             (params.isRound ? "true" : "false"),
++             ((params.colorMode == ColorMode::DARK) ? "dark" : "light"),
++             ((params.orientation == DeviceOrientation::LANDSCAPE) ? "landscape" : "portrait"),
++             GetDeviceTypeName(params.deviceType).c_str());
++        Ide::EventHandler::PostTask([this]() {
++            glfwRenderContext->SetWindowSize(aceRunArgs.deviceWidth, aceRunArgs.deviceHeight);
++        });
+         ability->LoadDocument(filePath, componentName, params);
+     } else {
+         auto uiContent = GetWindow()->GetUIContent();
+@@ -865,7 +906,7 @@ void JsAppImpl::DispatchBackPressedEvent() const
+ void JsAppImpl::DispatchKeyEvent(const std::shared_ptr<OHOS::MMI::KeyEvent>& keyEvent) const
+ {
+     if (isDebug && debugServerPort >= 0) {
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+         OHOS::Rosen::Window* window = OHOS::Previewer::PreviewerWindow::GetInstance().GetWindowObject();
+         if (!window) {
+             ELOG("JsApp::Run get window failed.");
+@@ -880,7 +921,7 @@ void JsAppImpl::DispatchKeyEvent(const std::shared_ptr<OHOS::MMI::KeyEvent>& key
+ void JsAppImpl::DispatchPointerEvent(const std::shared_ptr<OHOS::MMI::PointerEvent>& pointerEvent) const
+ {
+     if (isDebug && debugServerPort >= 0) {
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+         OHOS::Rosen::Window* window = OHOS::Previewer::PreviewerWindow::GetInstance().GetWindowObject();
+         if (!window) {
+             ELOG("JsApp::Run get window failed.");
+@@ -927,7 +968,22 @@ void JsAppImpl::InitGlfwEnv()
+         ELOG("Could not create window: InitGlfwEnv failed.");
+         return;
+     }
+-    glfwRenderContext->CreateGlfwWindow(aceRunArgs.deviceWidth, aceRunArgs.deviceHeight, false);
++
++    ILOG("CreateGlfwWindow WINDOW SIZE %d x %d", aceRunArgs.deviceWidth, aceRunArgs.deviceHeight);
++    glfwRenderContext->CreateGlfwWindow(aceRunArgs.deviceWidth, aceRunArgs.deviceHeight, isGUI);
++    if (isGUI) {
++        auto&& keyEventCallback = [](const std::shared_ptr<OHOS::MMI::KeyEvent>& keyEvent) {
++            ILOG("JsAppImpl GLFWwindow KeyEventCallback");
++            JsAppImpl::GetInstance().DispatchKeyEvent(keyEvent);
++        };
++        auto&& mouseEventCallback = [](const std::shared_ptr<PointerEvent>& pointerEvent) {
++            ILOG("JsAppImpl GLFWwindow MouseEventCallback");
++            JsAppImpl::GetInstance().DispatchPointerEvent(pointerEvent);
++        };
++        OHOS::Ace::EventAdapter::GetInstance().Initialize(glfwRenderContext);
++        OHOS::Ace::EventAdapter::GetInstance().RegisterKeyEventCallback(keyEventCallback);
++        OHOS::Ace::EventAdapter::GetInstance().RegisterPointerEventCallback(mouseEventCallback);
++    }
+     ILOG("InitGlfwEnv finished");
+ }
+ 
+@@ -935,7 +991,7 @@ void JsAppImpl::SetMockJsonInfo()
+ {
+     std::string filePath = commandInfo.appResourcePath + FileSystem::GetSeparator() + "mock-config.json";
+     if (isDebug && debugServerPort >= 0) {
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+         simulator->SetMockList(Ide::StageContext::GetInstance().ParseMockJsonFile(filePath));
+ #endif
+     } else {
+@@ -1040,7 +1096,7 @@ void JsAppImpl::UpdateAvoidArea2Ide(const std::string& key, const OHOS::Rosen::R
+ OHOS::Rosen::Window* JsAppImpl::GetWindow() const
+ {
+     if (isDebug && debugServerPort >= 0) {
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+         return OHOS::Previewer::PreviewerWindow::GetInstance().GetWindowObject();
+ #else
+         return nullptr;
+@@ -1058,11 +1114,9 @@ void JsAppImpl::InitAvoidAreas(OHOS::Rosen::Window* window)
+         window->GetSystemBarPropertyByType(OHOS::Rosen::WindowType::WINDOW_TYPE_NAVIGATION_INDICATOR));
+ }
+ 
+-void JsAppImpl::InitJsApp()
++void JsAppImpl::InitParams()
+ {
+     CommandParser& parser = CommandParser::GetInstance();
+-    InitCommandInfo();
+-    SetJsAppPath(parser.Value("j"));
+     if (parser.IsSet("s")) {
+         SetPipeName(parser.Value("s"));
+     }
+@@ -1084,6 +1138,25 @@ void JsAppImpl::InitJsApp()
+     if (parser.IsSet("cc")) {
+         SetConfigChanges(parser.Value("cc"));
+     }
++    if (parser.IsSet("gui")) {
++        isGUI = true;
++    }
++}
++
++void JsAppImpl::InitJsApp()
++{
++    CommandParser& parser = CommandParser::GetInstance();
++    InitCommandInfo();
++    if (parser.IsSet("hap")) {
++        SetJsAppPath(FileSystem::NormalizePath(parser.GetHapDir() + (parser.IsFAModel() ? "/assets/js/MainAbility" : "/ets")));
++    } else {
++        SetJsAppPath(parser.Value("j"));
++    }
++    InitParams();
++    if (parser.IsStandaloneMode() && parser.IsResolutionValid()) {
++        aceRunArgs.deviceWidth = parser.GetOrignalResolutionWidth();
++        aceRunArgs.deviceHeight = parser.GetOrignalResolutionHeight();
++    }
+     if (commandInfo.compressionResolutionWidth <= commandInfo.compressionResolutionHeight) {
+         SetDeviceOrentation("portrait");
+     } else {
+@@ -1127,7 +1200,7 @@ void JsAppImpl::StopAbility()
+         }
+     }
+     if (isDebug && debugServerPort >= 0) {
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+         if (simulator) {
+             simulator->TerminateAbility(debugAbilityId);
+         }
+diff --git a/ide/tools/previewer/jsapp/rich/JsAppImpl.h b/ide/tools/previewer/jsapp/rich/JsAppImpl.h
+index 5e2f064..9dc782e 100644
+--- a/ide/tools/previewer/jsapp/rich/JsAppImpl.h
++++ b/ide/tools/previewer/jsapp/rich/JsAppImpl.h
+@@ -39,7 +39,7 @@ namespace Rosen {
+     struct SystemBarProperty;
+     struct Rect;
+ }
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+ namespace AbilityRuntime {
+     class Simulator;
+     struct Options;
+@@ -116,6 +116,7 @@ protected:
+     double twoInOneScreenDensity = 240;    // Car Screen Density
+ 
+ private:
++    void InitParams();
+     void SetPkgContextInfo();
+     void SetMockJsonInfo();
+     void SetAssetPath(OHOS::Ace::Platform::AceRunArgs& args, const std::string) const;
+@@ -158,13 +159,14 @@ private:
+     int32_t height = 0;
+     int32_t orignalWidth = 0;
+     int32_t orignalHeight = 0;
++    bool isGUI = false;
+     AvoidAreas avoidInitialAreas;
+     OHOS::Ace::Platform::AceRunArgs aceRunArgs;
+     std::shared_ptr<OHOS::Rosen::GlfwRenderContext> glfwRenderContext;
+ #ifdef COMPONENT_TEST_ENABLED
+     std::string componentTestModeConfig;
+ #endif // COMPONENT_TEST_ENABLED
+-#if defined(__APPLE__) || defined(_WIN32)
++#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+     std::shared_ptr<OHOS::AbilityRuntime::Simulator> simulator;
+     int64_t debugAbilityId = -1;
+     void SetSimulatorParams(OHOS::AbilityRuntime::Options& options);
+diff --git a/ide/tools/previewer/jsapp/rich/external/EventHandler.cpp b/ide/tools/previewer/jsapp/rich/external/EventHandler.cpp
+index 55e8ecc..f66efb9 100644
+--- a/ide/tools/previewer/jsapp/rich/external/EventHandler.cpp
++++ b/ide/tools/previewer/jsapp/rich/external/EventHandler.cpp
+@@ -15,7 +15,7 @@
+ 
+ #include "EventHandler.h"
+ 
+-namespace OHOS::AppExecFwk {
++namespace OHOS::Ide {
+     void EventHandler::SetMainThreadId(std::thread::id id)
+     {
+         EventRunner::Current().SetMainThreadId(id);
+diff --git a/ide/tools/previewer/jsapp/rich/external/EventHandler.h b/ide/tools/previewer/jsapp/rich/external/EventHandler.h
+index 8e47f41..0e64c6e 100644
+--- a/ide/tools/previewer/jsapp/rich/external/EventHandler.h
++++ b/ide/tools/previewer/jsapp/rich/external/EventHandler.h
+@@ -18,7 +18,7 @@
+ 
+ #include "EventRunner.h"
+ 
+-namespace OHOS::AppExecFwk {
++namespace OHOS::Ide {
+ class EventHandler final {
+ public:
+     EventHandler() = default;
+diff --git a/ide/tools/previewer/jsapp/rich/external/EventQueue.cpp b/ide/tools/previewer/jsapp/rich/external/EventQueue.cpp
+index 2db7d88..d2b8dce 100644
+--- a/ide/tools/previewer/jsapp/rich/external/EventQueue.cpp
++++ b/ide/tools/previewer/jsapp/rich/external/EventQueue.cpp
+@@ -15,7 +15,7 @@
+ 
+ #include "EventQueue.h"
+ 
+-namespace OHOS::AppExecFwk {
++namespace OHOS::Ide {
+ EventTask::EventTask(size_t order, Callback task, std::chrono::steady_clock::time_point targetTime)
+     : order(order), task(task), targetTime(targetTime)
+ {
+diff --git a/ide/tools/previewer/jsapp/rich/external/EventQueue.h b/ide/tools/previewer/jsapp/rich/external/EventQueue.h
+index 7b6200f..2f6d054 100644
+--- a/ide/tools/previewer/jsapp/rich/external/EventQueue.h
++++ b/ide/tools/previewer/jsapp/rich/external/EventQueue.h
+@@ -21,7 +21,7 @@
+ #include <chrono>
+ #include <functional>
+ 
+-namespace OHOS::AppExecFwk {
++namespace OHOS::Ide {
+ using Callback = std::function<void()>;
+ 
+ class EventTask {
+diff --git a/ide/tools/previewer/jsapp/rich/external/EventRunner.cpp b/ide/tools/previewer/jsapp/rich/external/EventRunner.cpp
+index ae9b935..7fdace6 100644
+--- a/ide/tools/previewer/jsapp/rich/external/EventRunner.cpp
++++ b/ide/tools/previewer/jsapp/rich/external/EventRunner.cpp
+@@ -15,7 +15,7 @@
+ 
+ #include "EventRunner.h"
+ 
+-namespace OHOS::AppExecFwk {
++namespace OHOS::Ide {
+ EventRunner& EventRunner::Current()
+ {
+     static EventRunner mainRunner;
+diff --git a/ide/tools/previewer/jsapp/rich/external/EventRunner.h b/ide/tools/previewer/jsapp/rich/external/EventRunner.h
+index f4ebb36..dd568ec 100644
+--- a/ide/tools/previewer/jsapp/rich/external/EventRunner.h
++++ b/ide/tools/previewer/jsapp/rich/external/EventRunner.h
+@@ -21,7 +21,7 @@
+ #include <thread>
+ #include "EventQueue.h"
+ 
+-namespace OHOS::AppExecFwk {
++namespace OHOS::Ide {
+ class EventRunner final {
+ public:
+     EventRunner() = default;
+diff --git a/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/BUILD.gn b/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/BUILD.gn
+index a7ff6d5..ab28b31 100644
+--- a/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/BUILD.gn
++++ b/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/BUILD.gn
+@@ -38,6 +38,7 @@ ide_fuzztest("RichCommandParseFuzzTest") {
+     "//third_party/libwebsockets/include",
+     "//third_party/cJSON",
+     "//third_party/bounds_checking_function/include",
++    "//third_party/zlib",
+   ]
+   include_dirs += graphic_2d_include_path
+   include_dirs += window_manager_include_path
+@@ -84,6 +85,7 @@ ide_fuzztest("RichCommandParseFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -96,6 +98,7 @@ ide_fuzztest("RichCommandParseFuzzTest") {
+   deps = [
+     "//third_party/bounds_checking_function:libsec_static",
+     "//third_party/cJSON:cjson_static",
++    "//third_party/zlib:libz",
+   ]
+   libs = []
+   cflags = [ "-Wno-error=overflow" ]
+@@ -117,6 +120,7 @@ ide_fuzztest("LiteCommandParseFuzzTest") {
+     "//third_party/libwebsockets/include",
+     "//third_party/cJSON",
+     "//third_party/bounds_checking_function/include",
++    "//third_party/zlib",
+   ]
+   include_dirs += graphic_2d_include_path
+   include_dirs += window_manager_include_path
+@@ -163,6 +167,7 @@ ide_fuzztest("LiteCommandParseFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -175,6 +180,7 @@ ide_fuzztest("LiteCommandParseFuzzTest") {
+   deps = [
+     "//third_party/bounds_checking_function:libsec_static",
+     "//third_party/cJSON:cjson_static",
++    "//third_party/zlib:libz",
+   ]
+   libs = []
+   cflags = [ "-Wno-error=overflow" ]
+@@ -196,6 +202,7 @@ ide_fuzztest("CommonCommandParseFuzzTest") {
+     "//third_party/libwebsockets/include",
+     "//third_party/cJSON",
+     "//third_party/bounds_checking_function/include",
++    "//third_party/zlib",
+   ]
+   include_dirs += graphic_2d_include_path
+   include_dirs += window_manager_include_path
+@@ -242,6 +249,7 @@ ide_fuzztest("CommonCommandParseFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -254,6 +262,7 @@ ide_fuzztest("CommonCommandParseFuzzTest") {
+   deps = [
+     "//third_party/bounds_checking_function:libsec_static",
+     "//third_party/cJSON:cjson_static",
++    "//third_party/zlib:libz",
+   ]
+   libs = []
+   cflags = [ "-Wno-error=overflow" ]
+diff --git a/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/RichCommandParseFuzzer.cpp b/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/RichCommandParseFuzzer.cpp
+index ea93a13..9172d95 100644
+--- a/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/RichCommandParseFuzzer.cpp
++++ b/ide/tools/previewer/test/fuzztest/commandparse_fuzzer/RichCommandParseFuzzer.cpp
+@@ -52,7 +52,9 @@ std::map<std::string, std::string> richDataMap = {
+     {"AvoidArea", R"({"topRect":{"posX":0,"posY":0,"width":2340,"height":117},"bottomRect":{"posX":
+         0,"posY":0,"width":0,"height":0},"leftRect":{"posX":0,"posY":0,"width":0,"height":0},
+         "rightRect":{"posX":0,"posY":0,"width":2340,"height":84}})"},
+-    {"AvoidAreaChanged", ""}
++    {"AvoidAreaChanged", ""},
++    {"AvoidAreaChanged", ""},
++    {"ScreenShot", ""},
+ };
+ 
+ TEST(RichCommandParseFuzzTest, test_command)
+@@ -73,4 +75,4 @@ TEST(RichCommandParseFuzzTest, test_command)
+     }
+     std::cout << "--> RichCommandParseFuzzTest for rich end <--" << std::endl;
+ }
+-}
+\ No newline at end of file
++}
+diff --git a/ide/tools/previewer/test/fuzztest/jsonparse_fuzzer/BUILD.gn b/ide/tools/previewer/test/fuzztest/jsonparse_fuzzer/BUILD.gn
+index d9fc6ed..d4685fd 100644
+--- a/ide/tools/previewer/test/fuzztest/jsonparse_fuzzer/BUILD.gn
++++ b/ide/tools/previewer/test/fuzztest/jsonparse_fuzzer/BUILD.gn
+@@ -42,6 +42,7 @@ ide_fuzztest("DeviceConfigParseFuzzTest") {
+     "//third_party/libwebsockets/include",
+     "//third_party/cJSON",
+     "//third_party/bounds_checking_function/include",
++    "//third_party/zlib",
+   ]
+   include_dirs += graphic_2d_include_path
+   include_dirs += window_manager_include_path
+@@ -88,6 +89,7 @@ ide_fuzztest("DeviceConfigParseFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -99,6 +101,7 @@ ide_fuzztest("DeviceConfigParseFuzzTest") {
+   deps = [
+     "//third_party/bounds_checking_function:libsec_static",
+     "//third_party/cJSON:cjson_static",
++    "//third_party/zlib:libz",
+   ]
+   libs = []
+   cflags = [ "-Wno-error=overflow" ]
+@@ -132,6 +135,7 @@ ide_fuzztest("ReadFileContentsFuzzTest") {
+     "$ide_previewer_path/test/mock/arkui/MockAceAbility.cpp",
+     "$ide_previewer_path/test/mock/arkui/MockAcePreviewHelper.cpp",
+     "$ide_previewer_path/test/mock/graphic/MockGlfwRenderContext.cpp",
++    "$ide_previewer_path/test/mock/mock/MockEventAdapter.cpp",
+     "$ide_previewer_path/test/mock/mock/MockKeyInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseWheelImpl.cpp",
+@@ -155,6 +159,7 @@ ide_fuzztest("ReadFileContentsFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -223,6 +228,7 @@ ide_fuzztest("GetModulePathMapFuzzTest") {
+     "$ide_previewer_path/test/mock/arkui/MockAceAbility.cpp",
+     "$ide_previewer_path/test/mock/arkui/MockAcePreviewHelper.cpp",
+     "$ide_previewer_path/test/mock/graphic/MockGlfwRenderContext.cpp",
++    "$ide_previewer_path/test/mock/mock/MockEventAdapter.cpp",
+     "$ide_previewer_path/test/mock/mock/MockKeyInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseWheelImpl.cpp",
+@@ -246,6 +252,7 @@ ide_fuzztest("GetModulePathMapFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -313,6 +320,7 @@ ide_fuzztest("GetHspAceModuleBuildFuzzTest") {
+     "$ide_previewer_path/test/mock/arkui/MockAceAbility.cpp",
+     "$ide_previewer_path/test/mock/arkui/MockAcePreviewHelper.cpp",
+     "$ide_previewer_path/test/mock/graphic/MockGlfwRenderContext.cpp",
++    "$ide_previewer_path/test/mock/mock/MockEventAdapter.cpp",
+     "$ide_previewer_path/test/mock/mock/MockKeyInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseWheelImpl.cpp",
+@@ -336,6 +344,7 @@ ide_fuzztest("GetHspAceModuleBuildFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -403,6 +412,7 @@ ide_fuzztest("GetModuleBufferFromHspFuzzTest") {
+     "$ide_previewer_path/test/mock/arkui/MockAceAbility.cpp",
+     "$ide_previewer_path/test/mock/arkui/MockAcePreviewHelper.cpp",
+     "$ide_previewer_path/test/mock/graphic/MockGlfwRenderContext.cpp",
++    "$ide_previewer_path/test/mock/mock/MockEventAdapter.cpp",
+     "$ide_previewer_path/test/mock/mock/MockKeyInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseWheelImpl.cpp",
+@@ -426,6 +436,7 @@ ide_fuzztest("GetModuleBufferFromHspFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -494,6 +505,7 @@ ide_fuzztest("ParseMockJsonFileFuzzTest") {
+     "$ide_previewer_path/test/mock/arkui/MockAceAbility.cpp",
+     "$ide_previewer_path/test/mock/arkui/MockAcePreviewHelper.cpp",
+     "$ide_previewer_path/test/mock/graphic/MockGlfwRenderContext.cpp",
++    "$ide_previewer_path/test/mock/mock/MockEventAdapter.cpp",
+     "$ide_previewer_path/test/mock/mock/MockKeyInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseWheelImpl.cpp",
+@@ -517,6 +529,7 @@ ide_fuzztest("ParseMockJsonFileFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+@@ -584,6 +597,7 @@ ide_fuzztest("SetPkgContextInfoFuzzTest") {
+     "$ide_previewer_path/test/mock/arkui/MockAceAbility.cpp",
+     "$ide_previewer_path/test/mock/arkui/MockAcePreviewHelper.cpp",
+     "$ide_previewer_path/test/mock/graphic/MockGlfwRenderContext.cpp",
++    "$ide_previewer_path/test/mock/mock/MockEventAdapter.cpp",
+     "$ide_previewer_path/test/mock/mock/MockKeyInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseInputImpl.cpp",
+     "$ide_previewer_path/test/mock/mock/MockMouseWheelImpl.cpp",
+@@ -607,6 +621,7 @@ ide_fuzztest("SetPkgContextInfoFuzzTest") {
+     "$ide_previewer_path/util/SharedDataManager.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+   ]
+diff --git a/ide/tools/previewer/test/fuzztest/paramsparse_fuzzer/BUILD.gn b/ide/tools/previewer/test/fuzztest/paramsparse_fuzzer/BUILD.gn
+index 80d6610..986e87c 100644
+--- a/ide/tools/previewer/test/fuzztest/paramsparse_fuzzer/BUILD.gn
++++ b/ide/tools/previewer/test/fuzztest/paramsparse_fuzzer/BUILD.gn
+@@ -35,6 +35,7 @@ ide_fuzztest("ParamsParseFuzzTest") {
+     "$ide_previewer_path/util/PreviewerEngineLog.cpp",
+     "$ide_previewer_path/util/TimeTool.cpp",
+     "$ide_previewer_path/util/TraceTool.cpp",
++    "$ide_previewer_path/util/Unhap.cpp",
+     "$ide_previewer_path/util/unix/LocalDate.cpp",
+     "$ide_previewer_path/util/unix/NativeFileSystem.cpp",
+     "../main.cpp",
+@@ -48,10 +49,12 @@ ide_fuzztest("ParamsParseFuzzTest") {
+     "$ide_previewer_path/util/unix",
+     "//third_party/cJSON",
+     "//third_party/bounds_checking_function/include",
++    "//third_party/zlib",
+   ]
+   deps = [
+     "//third_party/bounds_checking_function:libsec_static",
+     "//third_party/cJSON:cjson_static",
++    "//third_party/zlib:libz",
+   ]
+   libs = []
+   cflags = []
+diff --git a/ide/tools/previewer/util/BUILD.gn b/ide/tools/previewer/util/BUILD.gn
+index 5c8e323..e264363 100644
+--- a/ide/tools/previewer/util/BUILD.gn
++++ b/ide/tools/previewer/util/BUILD.gn
+@@ -30,6 +30,7 @@ ohos_source_set("util_lite") {
+     "SharedDataManager.cpp",
+     "TimeTool.cpp",
+     "TraceTool.cpp",
++    "Unhap.cpp",
+     "WebSocketServer.cpp",
+   ]
+   cflags = [ "-std=c++17" ]
+@@ -68,6 +69,7 @@ ohos_source_set("util_lite") {
+     "//third_party/cJSON:cjson_static",
+     "//third_party/libwebsockets:websockets_static",
+   ]
++  external_deps = [ "zlib:shared_libz" ]
+   part_name = "previewer"
+   subsystem_name = "ide"
+ }
+@@ -125,6 +127,7 @@ ohos_shared_library("ide_util") {
+       "PreviewerEngineLog.cpp",
+       "TimeTool.cpp",
+       "TraceTool.cpp",
++      "Unhap.cpp",
+     ]
+     cflags = [ "-std=c++17" ]
+     cflags_cc = cflags
+@@ -184,6 +187,7 @@ ohos_shared_library("ide_util") {
+       "//third_party/bounds_checking_function:libsec_shared",
+       "//third_party/cJSON:cjson",
+     ]
++    external_deps = [ "zlib:shared_libz" ]
+   }
+   part_name = "previewer"
+   subsystem_name = "ide"
+diff --git a/ide/tools/previewer/util/CommandParser.cpp b/ide/tools/previewer/util/CommandParser.cpp
+index a78988d..b083691 100644
+--- a/ide/tools/previewer/util/CommandParser.cpp
++++ b/ide/tools/previewer/util/CommandParser.cpp
+@@ -21,6 +21,7 @@
+ #include "FileSystem.h"
+ #include "PreviewerEngineLog.h"
+ #include "TraceTool.h"
++#include "Unhap.h"
+ 
+ CommandParser* CommandParser::example = nullptr;
+ CommandParser::CommandParser()
+@@ -92,6 +93,10 @@ CommandParser::CommandParser()
+     Register("-foldStatus", 1, "Set fold status for Previewer.");
+     Register("-fr", 2, "Fold resolution <width> <height>"); // 2 arguments
+     Register("-ljPath", 1, "Set loader.json path for Previewer");
++    Register("-gui", 0, "Standalone Previewer GUI mode.");
++    Register("-cli", 0, "Standalone Previewer CLI mode.");
++    Register("-hap", 1, "Path to HAP.");
++    Register("-config", 1, "Config file name.");
+ #ifdef COMPONENT_TEST_ENABLED
+     Register("-componentTest", 1, "Set component test config");
+ #endif // COMPONENT_TEST_ENABLED
+@@ -99,6 +104,13 @@ CommandParser::CommandParser()
+     Register("-ilt", 1, "Set enable file opertaion for mock");
+ }
+ 
++CommandParser::~CommandParser()
++{
++    if (isHapDirTemp) {
++        FileSystem::RemoveDir(hapDir);
++    }
++}
++
+ CommandParser& CommandParser::GetInstance()
+ {
+     static CommandParser instance;
+@@ -128,18 +140,19 @@ bool CommandParser::ProcessCommand(std::vector<std::string> strs)
+ 
+ bool CommandParser::IsCommandValid()
+ {
+-    bool partRet = IsDebugPortValid() && IsAppPathValid() && IsAppNameValid() && IsResolutionValid();
++    bool partRet = IsDebugPortValid() && IsProjectModelValid() && IsAppPathValid() && IsAppNameValid() ;
+     partRet = partRet && IsConfigPathValid() && IsJsHeapValid() && IsJsHeapFlagValid() && IsScreenShapeValid();
+     partRet = partRet && IsDeviceValid() && IsUrlValid() && IsRefreshValid() && IsCardValid() && IsProjectIDValid();
+     partRet = partRet && IsColorModeValid() && IsOrientationValid() && IsWebSocketPortValid() && IsAceVersionValid();
+     partRet = partRet && IsScreenModeValid() && IsAppResourcePathValid() && IsLoaderJsonPathValid();
+-    partRet = partRet && IsProjectModelValid() && IsPagesValid() && IsContainerSdkPathValid();
++    partRet = partRet && IsResolutionValid() && IsPagesValid() && IsContainerSdkPathValid();
+     partRet = partRet && IsComponentModeValid() && IsAbilityPathValid() && IsStaticCardValid();
+     partRet = partRet && IsFoldableValid() && IsFoldStatusValid() && IsFoldResolutionValid();
+     partRet = partRet && IsAbilityNameValid() && IsLanguageValid() && IsTracePipeNameValid();
+     partRet = partRet && IsLocalSocketNameValid() && IsConfigChangesValid() && IsScreenDensityValid();
++    partRet = partRet && IsConfigChangesValid() && IsScreenDensityValid();
+     partRet = partRet && IsSidValid() && EnableFileOperationValid();
+-    if (partRet) {
++    if (partRet  || IsStandaloneMode()) {
+         return true;
+     }
+     ELOG(errorInfo.c_str());
+@@ -150,28 +163,53 @@ bool CommandParser::IsCommandValid()
+ 
+ bool CommandParser::IsSet(std::string key)
+ {
+-    if (argsMap.find(std::string("-") + key) == argsMap.end()) {
+-        return false;
++    if (argsMap.find(std::string("-") + key) != argsMap.end()) {
++        return true;
+     }
+-    return true;
++    if (config[key].IsValid()) {
++        return true;
++    }
++    return false;
+ }
+ 
+ std::string CommandParser::Value(std::string key)
+ {
+-    auto args = argsMap[std::string("-") + key];
+-    if (args.size() > 0) {
+-        return args[0];
++    auto argsIt = argsMap.find(std::string("-") + key);
++    if (argsIt != argsMap.end()) {
++        if (argsIt->second.size() > 0) {
++            return argsIt->second[0];
++        }
++        return std::string();
++    }
++    Json2::Value configValue = config[key];
++    if (configValue.IsString()) {
++        return configValue.AsString();
++    } else if (configValue.IsNumber()) {
++        return std::to_string(configValue.AsDouble());
+     }
+     return std::string();
+ }
+ 
+ std::vector<std::string> CommandParser::Values(std::string key)
+ {
+-    if (argsMap.find(key) == argsMap.end()) {
+-        return std::vector<std::string>();
++    auto argsIt = argsMap.find(key);
++    if (argsIt != argsMap.end()) {
++        return argsIt->second;
+     }
+-    std::vector<std::string> args = argsMap[key];
+-    return args;
++    Json2::Value configValue = config[key.substr(1)];
++    if (configValue.IsArray()) {
++        std::vector<std::string> args;
++        for (uint32_t i = 0; i < configValue.GetArraySize(); ++i) {
++            Json2::Value item = configValue.GetArrayItem(i);
++            if (item.IsString()) {
++                args.push_back(item.AsString());
++            } else if (item.IsNumber()) {
++                args.push_back(std::to_string(item.AsDouble()));
++            }
++        }
++        return args;
++    }
++    return std::vector<std::string>();
+ }
+ 
+ void CommandParser::Register(std::string key, uint32_t argc, std::string help)
+@@ -330,12 +368,17 @@ bool CommandParser::IsDebugPortValid()
+ 
+ bool CommandParser::IsAppPathValid()
+ {
+-    if (!IsSet("j")) {
++    if (!IsSet("j") && !IsSet("hap")) {
+         errorInfo = std::string("No app path specified.");
+         ELOG("Launch -j parameters abnormal!");
+         return false;
+     }
+-    std::string path = Value("j");
++    std::string path = "";
++    if (IsSet("hap")) {
++        path = FileSystem::NormalizePath(GetHapDir() + (IsFAModel() ? "/assets/js/MainAbility" : "/ets"));
++    } else {
++        path = Value("j");
++    }
+     if (!FileSystem::IsDirectoryExists(path)) {
+         errorInfo = std::string("Js app path not exist.");
+         ELOG("Launch -j parameters abnormal!");
+@@ -345,6 +388,53 @@ bool CommandParser::IsAppPathValid()
+     return true;
+ }
+ 
++bool CommandParser::GetModuleInfoJson()
++{
++    if (!IsSet("hap")) {
++        return false;
++    }
++    if (moduleInfoJson.IsValid()) {
++        return true;
++    }
++
++    return GetJson(FileSystem::NormalizePath(GetHapDir() + (IsFAModel() ? "/config.json" : "/module.json")), moduleInfoJson);
++}
++
++bool CommandParser::GetResourcesProfieJson()
++{
++    if (!IsSet("hap")) {
++        return false;
++    }
++    if (resourcesProfieJson.IsValid()) {
++        return true;
++    }
++    if (!IsPagesValid()) {
++        return false;
++    }
++    std::string path = GetHapDir() + "/resources/base/profile/" + pages + ".json";
++    return GetJson(FileSystem::NormalizePath(path), resourcesProfieJson);
++}
++
++bool CommandParser::GetJson(const std::string &fileName, Json2::Value &jsonDataOut)
++{
++    // Read the JSON file into a string
++    std::string jsonStr = JsonReader::ReadFile(fileName);
++    if (jsonStr.empty()) {
++        ELOG("Error: Failed to read JSON file \"%s\" or file is empty.", fileName.c_str());
++        return false;
++    }
++
++    // Parse the string into a JSON object
++    Json2::Value jsonData = JsonReader::ParseJsonData2(jsonStr);
++    if (!jsonData.IsValid()) {
++        ELOG("Error: Failed to parse JSON data.");
++        return false;
++    }
++
++    std::swap(jsonDataOut, jsonData);
++    return true;
++}
++
+ bool CommandParser::IsAppNameValid()
+ {
+     if (IsSet("n")) {
+@@ -358,6 +448,11 @@ bool CommandParser::IsAppNameValid()
+             return false;
+         }
+         appName = Value("n");
++    } else if (GetModuleInfoJson() &&
++               moduleInfoJson.IsMember("module") &&
++               moduleInfoJson["module"].IsMember("name") &&
++               moduleInfoJson["module"]["name"].IsString()) {
++        appName = moduleInfoJson["module"]["name"].AsString();
+     }
+     ILOG("CommandParser app name: %s", appName.c_str());
+     return true;
+@@ -450,8 +545,22 @@ bool CommandParser::IsDeviceValid()
+ 
+ bool CommandParser::IsUrlValid()
+ {
+-    urlPath = Value("url");
+-    if (urlPath.empty()) {
++    auto url = Value("url");
++    if (!url.empty()) {
++        urlPath = url;
++    } else if (GetResourcesProfieJson()) {
++        Json2::Value src = resourcesProfieJson["src"];
++        if (src.GetArraySize() == 0) {
++            ELOG("Error: Key 'src' or first src not found in 'main_pages.json'.");
++            return false;
++        }
++        Json2::Value firstSrc = src.GetArrayItem(0);
++        urlPath = firstSrc.AsString();
++        if (urlPath.empty()) {
++            ELOG("Error: First src record is empty.");
++            return false;
++        }
++    } else {
+         errorInfo = "Launch -url parameters is empty.";
+         return false;
+     }
+@@ -477,11 +586,16 @@ bool CommandParser::IsConfigPathValid()
+ 
+ bool CommandParser::IsAppResourcePathValid()
+ {
+-    if (!IsSet("arp")) {
++    if (!IsSet("arp") && !IsSet("hap")) {
+         return true;
+     }
+ 
+-    std::string path = Value("arp");
++    std::string path = "";
++    if (IsSet("hap")) {
++        path = GetHapDir();
++    } else {
++        path = Value("arp");
++    }
+     if (!FileSystem::IsDirectoryExists(path)) {
+         errorInfo = std::string("The configuration appResource path does not exist.");
+         ELOG("Launch -arp parameters abnormal!");
+@@ -512,10 +626,18 @@ bool CommandParser::IsProjectModelValid()
+ 
+ bool CommandParser::IsPagesValid()
+ {
+-    if (!IsSet("pages")) {
++    const std::string prefix = "$profile:";
++    if (IsSet("pages")) {
++        pages = Value("pages");
++    } else if (GetModuleInfoJson() &&
++            moduleInfoJson.IsMember("module") &&
++            moduleInfoJson["module"].IsMember("pages") &&
++            moduleInfoJson["module"]["pages"].IsString() &&
++            moduleInfoJson["module"]["pages"].AsString().substr(0, prefix.length()) == prefix) {
++        pages = moduleInfoJson["module"]["pages"].AsString().substr(prefix.length());
++    } else {
+         return true;
+     }
+-    pages = Value("pages");
+     if (CheckParamInvalidity(pages, false)) {
+         errorInfo = "Launch -pages parameters is not match regex.";
+         return false;
+@@ -868,17 +990,39 @@ bool CommandParser::IsAbilityPathValid()
+     if (deviceType == "liteWearable" || deviceType == "smartVision") {
+         return true;
+     }
+-    if (!IsSet("abp")) {
++    if (IsSet("abp")) {
++        std::string path = Value("abp");
++        if (path.empty()) {
++            errorInfo = std::string("The ability path is empty.");
++            ELOG("Launch -abp parameters abnormal!");
++            return false;
++        }
++        abilityPath = path;
++    } else if (GetModuleInfoJson()) {
++        // Check if "abilities[0].srcEntry" and "abilities[0].name" keys are present
++        if (!moduleInfoJson["module"].IsMember("abilities") ||
++            moduleInfoJson["module"]["abilities"].GetArraySize() == 0) {
++            ELOG("Error: Key 'abilities' or first ability not found in 'module.json'.");
++            return false;
++        }
++        Json2::Value firstAbility = moduleInfoJson["module"]["abilities"].GetArrayItem(0);
++        if (!firstAbility.IsMember("srcEntry") || !firstAbility.IsMember("name")) {
++            ELOG("Error: Key 'srcEntry' or 'name' not found in first ability.");
++            return false;
++        }
++        auto path = firstAbility["srcEntry"].AsString();
++        if (path.find("./") == 0) {
++            path = path.substr(headSymCount);
++        }
++        auto baseDir = FileSystem::BaseDir(path);
++        auto baseName = FileSystem::BaseName(path);
++        auto name = baseName.substr(0, baseName.rfind('.'));
++        abilityPath = FileSystem::NormalizePath(baseDir + '/' + name + ".abc");
++    } else {
+         errorInfo = "Launch -d parameters without -abp parameters.";
+         return false;
+     }
+-    std::string path = Value("abp");
+-    if (path.empty()) {
+-        errorInfo = std::string("The ability path is empty.");
+-        ELOG("Launch -abp parameters abnormal!");
+-        return false;
+-    }
+-    abilityPath = path;
++    ILOG("CommandParser ability path: %s", abilityPath.c_str());
+     return true;
+ }
+ 
+@@ -890,17 +1034,32 @@ bool CommandParser::IsAbilityNameValid()
+     if (deviceType == "liteWearable" || deviceType == "smartVision") {
+         return true;
+     }
+-    if (!IsSet("abn")) {
++    if (IsSet("abn")) {
++        std::string name = Value("abn");
++        if (name.empty()) {
++            errorInfo = std::string("The ability name is empty.");
++            ELOG("Launch -abn parameters abnormal!");
++            return false;
++        }
++        abilityName = name;
++    } else if (GetModuleInfoJson()) {
++        // Check if "abilities[0].srcEntry" and "abilities[0].name" keys are present
++        if (!moduleInfoJson["module"].IsMember("abilities") ||
++            moduleInfoJson["module"]["abilities"].GetArraySize() == 0) {
++            ELOG("Error: Key 'abilities' or first ability not found in 'module.json'.");
++            return false;
++        }
++        Json2::Value firstAbility = moduleInfoJson["module"]["abilities"].GetArrayItem(0);
++        if (!firstAbility.IsMember("srcEntry") || !firstAbility.IsMember("name")) {
++            ELOG("Error: Key 'srcEntry' or 'name' not found in first ability.");
++            return false;
++        }
++        abilityName = firstAbility["name"].AsString();
++    } else {
+         ELOG("Launch -d parameters without -abn parameters.");
+         return true; // 兼容老版本IDE（沒有abn参数）
+     }
+-    std::string name = Value("abn");
+-    if (name.empty()) {
+-        errorInfo = std::string("The ability name is empty.");
+-        ELOG("Launch -abn parameters abnormal!");
+-        return false;
+-    }
+-    abilityName = name;
++    ILOG("CommandParser ability name: %s", abilityName.c_str());
+     return true;
+ }
+ 
+@@ -1024,6 +1183,43 @@ bool CommandParser::IsLoaderJsonPathValid()
+     return true;
+ }
+ 
++bool CommandParser::IsStandaloneMode()
++{
++    if (IsSet("gui") || IsSet("cli")) {
++        return true;
++    }
++    return false;
++}
++
++bool CommandParser::LoadConfig()
++{
++    if (config.IsValid()) {
++        return true;
++    }
++
++    auto fileName = FileSystem::NormalizePath(FileSystem::GetExecutablePath() + "/config.json");
++    if (IsSet("config")) {
++        fileName = Value("config");
++    }
++
++    // Read the JSON file into a string
++    std::string jsonStr = JsonReader::ReadFile(fileName);
++    if (jsonStr.empty()) {
++        ELOG("Error: Failed to read JSON file or file is empty.");
++        return false;
++    }
++
++    // Parse the string into a JSON object
++    Json2::Value jsonData = JsonReader::ParseJsonData2(jsonStr);
++    if (!jsonData.IsValid()) {
++        ELOG("Error: Failed to parse JSON data.");
++        return false;
++    }
++
++    std::swap(config, jsonData);
++    return true;
++}
++
+ int CommandParser::ParseArgs(int argc, char* argv[])
+ {
+     int startParamInvalidCode = 11;
+@@ -1038,6 +1234,9 @@ int CommandParser::ParseArgs(int argc, char* argv[])
+     if (!ProcessCommand(strs)) {
+         return 0;
+     }
++    if (IsStandaloneMode()) {
++        LoadConfig();
++    }
+     if (!IsCommandValid()) {
+         FLOG("Start args is invalid.");
+         return startParamInvalidCode;
+@@ -1080,6 +1279,28 @@ std::string CommandParser::GetComponentTestConfig() const
+ }
+ #endif // COMPONENT_TEST_ENABLED
+ 
++std::string CommandParser::GetHapDir()
++{
++    if (hapDir.empty() && IsSet("hap")) {
++        std::string hap = Value("hap");
++        if (FileSystem::IsDirectoryExists(hap)) {
++            hapDir = FileSystem::GetFullPath(hap);
++        } else if (FileSystem::IsFileExists(hap)) {
++            hapDir = FileSystem::CreateTempDirectory();
++            if (!hapDir.empty()) {
++                Unhap(hap, hapDir);
++                isHapDirTemp = true;
++            }
++        }
++    }
++    return hapDir;
++}
++
++bool CommandParser::IsFAModel()
++{
++    return projectModel == "FA";
++}
++
+ std::string CommandParser::GetSid() const
+ {
+     return sid;
+diff --git a/ide/tools/previewer/util/CommandParser.h b/ide/tools/previewer/util/CommandParser.h
+index f244416..5629ceb 100644
+--- a/ide/tools/previewer/util/CommandParser.h
++++ b/ide/tools/previewer/util/CommandParser.h
+@@ -20,6 +20,8 @@
+ #include <string>
+ #include <vector>
+ 
++#include "JsonReader.h"
++
+ class CommandInfo {
+ public:
+     std::string deviceType;
+@@ -59,6 +61,7 @@ public:
+     std::string Value(std::string key);
+     std::vector<std::string> Values(std::string key);
+     void Register(std::string key, uint32_t argc, std::string help);
++    bool IsResolutionValid();
+     bool IsResolutionValid(int32_t resolution) const;
+     int32_t GetOrignalResolutionWidth() const;
+     int32_t GetOrignalResolutionHeight() const;
+@@ -97,6 +100,9 @@ public:
+     int ParseArgs(int argc, char* argv[]);
+     void GetCommandInfo(CommandInfo& info) const;
+     void GetFoldInfo(FoldInfo& info) const;
++    bool IsStandaloneMode();
++    std::string GetHapDir();
++    bool IsFAModel();
+ #ifdef COMPONENT_TEST_ENABLED
+     std::string GetComponentTestConfig() const;
+ #endif // COMPONENT_TEST_ENABLED
+@@ -104,7 +110,7 @@ public:
+ 
+ private:
+     CommandParser();
+-    ~CommandParser() {}
++    ~CommandParser();
+     std::string errorInfo;
+     std::map<std::string, std::vector<std::string>> argsMap;
+     std::map<std::string, uint32_t> regsArgsCountMap;
+@@ -130,6 +136,7 @@ private:
+     const int MAX_JSHEAPSIZE = 512 * 1024;
+     const int MIN_JSHEAPSIZE = 48 * 1024;
+     const size_t MAX_NAME_LENGTH = 256;
++    const size_t headSymCount = 2;
+     bool isSendJSHeap;
+     int32_t orignalResolutionWidth;
+     int32_t orignalResolutionHeight;
+@@ -168,11 +175,15 @@ private:
+     int32_t foldResolutionHeight;
+     std::string loaderJsonPath;
+     std::string sid;
++    std::string hapDir;
++    bool isHapDirTemp = false;
++    Json2::Value moduleInfoJson;
++    Json2::Value resourcesProfieJson;
++    Json2::Value config;
+ 
+     bool IsDebugPortValid();
+     bool IsAppPathValid();
+     bool IsAppNameValid();
+-    bool IsResolutionValid();
+     bool IsConfigPathValid();
+     bool IsAppResourcePathValid();
+     bool IsResolutionRangeValid(std::string value);
+@@ -210,6 +221,10 @@ private:
+     bool IsSidValid();
+     std::string HelpText();
+     void ProcessingCommand(const std::vector<std::string>& strs);
++    bool GetModuleInfoJson();
++    bool GetResourcesProfieJson();
++    static bool GetJson(const std::string &fileName, Json2::Value &jsonData);
++    bool LoadConfig();
+ };
+ 
+ #endif // COMMANDPARSER_H
+diff --git a/ide/tools/previewer/util/FileSystem.cpp b/ide/tools/previewer/util/FileSystem.cpp
+index acf01e3..365478f 100644
+--- a/ide/tools/previewer/util/FileSystem.cpp
++++ b/ide/tools/previewer/util/FileSystem.cpp
+@@ -17,6 +17,20 @@
+ 
+ #include <sys/stat.h>
+ #include <unistd.h>
++#include <dirent.h>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++
++#ifdef _WIN32
++#include <windows.h>
++#include <direct.h>
++#elif __linux__
++#include <climits>
++#elif __APPLE__
++#include <mach-o/dyld.h>
++#endif
++
+ 
+ #include "PreviewerEngineLog.h"
+ #include "NativeFileSystem.h"
+@@ -25,11 +39,7 @@ std::vector<std::string> FileSystem::pathList = {"file_system", "app", "ace", "d
+ std::string FileSystem::bundleName = "";
+ std::string FileSystem::fileSystemPath = "";
+ 
+-#ifdef _WIN32
+-std::string FileSystem::separator = "\\";
+-#else
+ std::string FileSystem::separator = "/";
+-#endif
+ 
+ bool FileSystem::IsFileExists(std::string path)
+ {
+@@ -75,8 +85,14 @@ void FileSystem::MakeVirtualFileSystemPath()
+     fileSystemPath = dirToMake;
+ }
+ 
+-int FileSystem::MakeDir(std::string path)
++int FileSystem::MakeDir(const std::string &path)
+ {
++    std::string basePath = BaseDir(path);
++    if (!basePath.empty() && !IsDirectoryExists(basePath)) {
++        if (int err = MakeDir(basePath)) {
++            return err;
++        }
++    }
+     int result = 0;
+ #ifdef _WIN32
+     result = mkdir(path.data());
+@@ -86,6 +102,102 @@ int FileSystem::MakeDir(std::string path)
+     return result;
+ }
+ 
++std::string FileSystem::BaseDir(const std::string &path)
++{
++    return path.substr(0, path.rfind(separator));
++}
++
++std::string FileSystem::BaseName(const std::string &path)
++{
++    return path.substr(path.rfind(separator) + 1);
++}
++
++bool FileSystem::RemoveDir(const std::string &dirPath)
++{
++    DIR *dir = opendir(dirPath.c_str());
++    if (dir == nullptr) {
++        ELOG("Failed to open directory");
++        return false;
++    }
++
++    struct dirent *entry;
++    while ((entry = readdir(dir)) != nullptr) {
++        std::string fileOrDirName = entry->d_name;
++        if (fileOrDirName == "." || fileOrDirName == "..") {
++            continue;
++        }
++
++        std::string fullPath = dirPath + separator + fileOrDirName;
++
++        struct stat pathStat;
++        if (stat(fullPath.c_str(), &pathStat) == -1) {
++            ELOG(("Failed to get file status: " + fullPath).c_str());
++            closedir(dir);
++            return false;
++        }
++
++        if (S_ISDIR(pathStat.st_mode)) {
++            if (!RemoveDir(fullPath)) {
++                closedir(dir);
++                return false;
++            }
++        } else {
++            if (remove(fullPath.c_str()) != 0) {
++                ELOG(("Failed to delete file: " + fullPath).c_str());
++                closedir(dir);
++                return false;
++            }
++        }
++    }
++
++    closedir(dir);
++
++    if (rmdir(dirPath.c_str()) != 0) {
++        ELOG(("Failed to remove directory: " + dirPath).c_str());
++        return false;
++    }
++
++    return true;
++}
++
++static std::string GetTempDir()
++{
++#ifdef _WIN32
++    char tempPath[MAX_PATH];
++    GetTempPath(MAX_PATH, tempPath);
++    return std::string(tempPath);
++#else
++    char* tempPath = getenv("TMPDIR");
++    return tempPath == nullptr ? std::string("/tmp") : std::string(tempPath);
++#endif
++}
++
++std::string FileSystem::CreateTempDirectory()
++{
++#ifdef _WIN32
++    char tempDir[MAX_PATH];
++    if (GetTempFileName(GetTempDir().c_str(), "previewer", 0, tempDir) == 0) {
++        ELOG("Failed to create temporary directory");
++        return "";
++    }
++    DeleteFile(tempDir);
++    if (!CreateDirectory(tempDir, nullptr)) {
++        ELOG("Failed to create temporary directory");
++        return "";
++    }
++    return std::string(tempDir);
++#else
++    std::string tempDirTemplate = GetTempDir() + "/previewer_XXXXXX";
++    char tempDir[tempDirTemplate.size() + 1];
++    tempDirTemplate.copy(tempDir, tempDirTemplate.size());
++    if (mkdtemp(tempDir) == nullptr) {
++        ELOG("Failed to create temporary directory");
++        return "";
++    }
++    return std::string(tempDir);
++#endif
++}
++
+ void FileSystem::SetBundleName(std::string name)
+ {
+     bundleName = name;
+@@ -120,4 +232,55 @@ std::string FileSystem::NormalizePath(const std::string& path)
+         }
+     }
+     return normalizedPath;
+-}
+\ No newline at end of file
++}
++
++std::string FileSystem::GetFullPath(const std::string& path)
++{
++    char fullPath[PATH_MAX];
++
++#ifdef _WIN32
++    if (GetFullPathName(path.c_str(), PATH_MAX, fullPath, NULL)) {
++        return std::string(fullPath);
++    }
++#elif __linux__ || __APPLE__
++    if (realpath(path.c_str(), fullPath)) {
++        return std::string(fullPath);
++    }
++#endif
++
++    return path;
++}
++
++std::string FileSystem::GetExecutablePath()
++{
++    std::string path;
++
++#ifdef _WIN32
++    char buffer[MAX_PATH];
++    GetModuleFileName(NULL, buffer, MAX_PATH);
++    std::string::size_type pos = std::string(buffer).find_last_of("\\/");
++    path = std::string(buffer).substr(0, pos);
++
++#elif __linux__
++    char buffer[PATH_MAX];
++    ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX);
++    if (count != -1) {
++        path = std::string(buffer, (count > 0) ? count : 0);
++        std::string::size_type pos = path.find_last_of('/');
++        path = path.substr(0, pos);
++    }
++
++#elif __APPLE__
++    char buffer[PATH_MAX];
++    uint32_t size = sizeof(buffer);
++    if (_NSGetExecutablePath(buffer, &size) == 0) {
++        path = std::string(buffer);
++        std::string::size_type pos = path.find_last_of('/');
++        path = path.substr(0, pos);
++    }
++#endif
++
++    ILOG("Executable path: %s", path.c_str());
++
++    return path;
++}
+diff --git a/ide/tools/previewer/util/FileSystem.h b/ide/tools/previewer/util/FileSystem.h
+index 9d62090..da38fc5 100644
+--- a/ide/tools/previewer/util/FileSystem.h
++++ b/ide/tools/previewer/util/FileSystem.h
+@@ -26,11 +26,17 @@ public:
+     static std::string GetApplicationPath();
+     static const std::string& GetVirtualFileSystemPath();
+     static void MakeVirtualFileSystemPath();
+-    static int MakeDir(std::string path);
++    static int MakeDir(const std::string &path);
++    static std::string BaseDir(const std::string &path);
++    static std::string BaseName(const std::string &path);
++    static bool RemoveDir(const std::string &dirPath);
++    static std::string CreateTempDirectory();
+     static void SetBundleName(std::string name);
+     static std::string GetSeparator();
+     static std::string FindSubfolderByName(const std::string& parentFolderPath, const std::string& subfolderName);
+     static std::string NormalizePath(const std::string& path);
++    static std::string GetFullPath(const std::string &path);
++    static std::string GetExecutablePath();
+ private:
+     static std::vector<std::string> pathList;
+     static std::string separator;
+diff --git a/ide/tools/previewer/util/JsonReader.cpp b/ide/tools/previewer/util/JsonReader.cpp
+index edafa0f..d1cf288 100644
+--- a/ide/tools/previewer/util/JsonReader.cpp
++++ b/ide/tools/previewer/util/JsonReader.cpp
+@@ -665,6 +665,11 @@ Json2::Value JsonReader::CreateBool(const bool value)
+     return Json2::Value(cJSON_CreateBool(value));
+ }
+ 
++Json2::Value JsonReader::CreateNumber(double value)
++{
++    return Json2::Value(cJSON_CreateNumber(value));
++}
++
+ Json2::Value JsonReader::CreateString(const std::string& value)
+ {
+     return Json2::Value(cJSON_CreateString(value.c_str()));
+diff --git a/ide/tools/previewer/util/JsonReader.h b/ide/tools/previewer/util/JsonReader.h
+index 0e5ccc1..c6230eb 100644
+--- a/ide/tools/previewer/util/JsonReader.h
++++ b/ide/tools/previewer/util/JsonReader.h
+@@ -127,6 +127,7 @@ public:
+     static Json2::Value CreateObject();
+     static Json2::Value CreateArray();
+     static Json2::Value CreateBool(const bool value);
++    static Json2::Value CreateNumber(double value);
+     static Json2::Value CreateString(const std::string& value);
+     static Json2::Value DepthCopy(const Json2::Value& value);
+     static Json2::Value CreateNull();
+diff --git a/ide/tools/previewer/config/config.json b/ide/tools/previewer/config/config.json
+new file mode 100755
+index 0000000..2dc51a7
+--- /dev/null
++++ b/ide/tools/previewer/config/config.json
+@@ -0,0 +1,16 @@
++{
++  "s": "previewer",
++  "refresh": "region",
++  "cpm": "false",
++  "device": "phone",
++  "shape": "rect",
++  "sd": 160,
++  "or": [432, 936],
++  "cr": [432, 936],
++  "n": "entry",
++  "av": "ACE_2_0",
++  "pm": "Stage",
++  "l": "en_US",
++  "cm": "light",
++  "o": "portrait"
++}
+diff --git a/ide/tools/previewer/test/mock/mock/MockEventAdapter.cpp b/ide/tools/previewer/test/mock/mock/MockEventAdapter.cpp
+new file mode 100644
+index 0000000..08e900e
+--- /dev/null
++++ b/ide/tools/previewer/test/mock/mock/MockEventAdapter.cpp
+@@ -0,0 +1,47 @@
++/*
++ * Copyright (c) 2025 Huawei Device Co., Ltd.
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "adapter/preview/entrance/samples/event_adapter.h"
++
++#include <map>
++#include <memory>
++
++namespace OHOS::Ace::Sample {
++
++EventAdapter::EventAdapter() {}
++
++EventAdapter::~EventAdapter() = default;
++
++void EventAdapter::Initialize(std::shared_ptr<GlfwRenderContext>& glfwRenderContext) {}
++
++void EventAdapter::RegisterKeyEventCallback(MMIKeyEventCallback&& callback) {}
++
++void EventAdapter::RegisterPointerEventCallback(MMIPointerEventCallback&& callback) {}
++
++void EventAdapter::RegisterInspectorCallback(InspectorCallback&& callback) {}
++
++bool EventAdapter::RecognizeKeyEvent(int key, int action, int mods)
++{
++    return true;
++}
++
++void EventAdapter::RecognizePointerEvent(const TouchType type) {}
++
++bool EventAdapter::RunSpecialOperations(int key, int action, int mods)
++{
++    return true;
++}
++
++} // namespace OHOS::Ace::Sample
+diff --git a/ide/tools/previewer/util/Unhap.cpp b/ide/tools/previewer/util/Unhap.cpp
+new file mode 100755
+index 0000000..9cff441
+--- /dev/null
++++ b/ide/tools/previewer/util/Unhap.cpp
+@@ -0,0 +1,124 @@
++/*
++ * Copyright (c) 2024 Huawei Device Co., Ltd.
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "Unhap.h"
++
++#include <cstdio>
++#include <cstdlib>
++#include <dirent.h>
++#include <fstream>
++
++#include "PreviewerEngineLog.h"
++#include "FileSystem.h"
++#include "contrib/minizip/unzip.h"
++#include "zlib.h"
++
++using namespace std;
++
++bool SetupPandaClassPath(const string &destDir)
++{
++    constexpr uint8_t extFileSize = 3;
++    string pandaClassPath = FileSystem::NormalizePath(destDir + "/libs/x86-64/");
++    if (!FileSystem::IsDirectoryExists(pandaClassPath) || !FileSystem::IsDirectoryExists("./module/")) {
++        return true;
++    }
++#ifdef _WIN32
++    if (getenv("PANDA_CLASS_PATH") == nullptr) {
++        string env = string("PANDA_CLASS_PATH=") + pandaClassPath;
++        putenv(env.data());
++    }
++#elif __linux__ || __APPLE__
++    setenv("PANDA_CLASS_PATH", pandaClassPath.c_str(), 0);
++#endif
++    DIR *hPandaClassDir = opendir(pandaClassPath.c_str());
++    if (!hPandaClassDir) {
++        return true;
++    }
++    struct dirent *dir;
++    while ((dir = readdir(hPandaClassDir)) != nullptr) {
++        // Rename .abc.so files to .abc because Panda VM could not start .abc.so
++        string fileNameSrc = dir->d_name;
++        if (fileNameSrc.find(".abc.so") != string::npos) {
++            string fileNameDst = fileNameSrc;
++            fileNameDst.replace(fileNameDst.end() - extFileSize, fileNameDst.end(), "");
++            rename((pandaClassPath + fileNameSrc).c_str(), (pandaClassPath + fileNameDst).c_str());
++            continue;
++        }
++        // Copy native libs to "./module" folder of Previewer
++        if (fileNameSrc.find(".so") != string::npos) {
++            ifstream src(pandaClassPath + fileNameSrc, ios::binary);
++            string fileNameDst = "./module/" + FileSystem::BaseName(dir->d_name);
++            ofstream dst(fileNameDst, ios::binary);
++            dst << src.rdbuf();
++            src.close();
++            dst.close();
++        }
++    }
++    closedir(hPandaClassDir);
++    return true;
++}
++
++bool Unhap(const string &hapPath, const string &destDir)
++{
++    unzFile zipfile = unzOpen(hapPath.c_str());
++    if (zipfile == nullptr) {
++        ELOG("Failed to open ZIP archive");
++        return false;
++    }
++    // Iterate through all files in the archive
++    if (unzGoToFirstFile(zipfile) != UNZ_OK) {
++        unzClose(zipfile);
++        ELOG("Error while going to the first file");
++        return false;
++    }
++    do {
++        char filename[FILENAME_MAX];
++        unz_file_info fileInfo;
++        if (unzGetCurrentFileInfo(zipfile, &fileInfo, filename, sizeof(filename), nullptr, 0, nullptr, 0) != UNZ_OK) {
++            unzClose(zipfile);
++            ELOG("Error while getting file information");
++            return false;
++        }
++        string fullPath = FileSystem::NormalizePath(destDir + "/" + filename);
++        // Check if it is a directory
++        if (fullPath.back() == FileSystem::GetSeparator()[0]) {
++            FileSystem::MakeDir(fullPath);
++        } else {
++            FileSystem::MakeDir(FileSystem::BaseDir(fullPath));
++            // It's a file, extract it
++            if (unzOpenCurrentFile(zipfile) != UNZ_OK) {
++                unzClose(zipfile);
++                ELOG("Failed to open file inside the archive");
++                return false;
++            }
++            FILE *f = fopen(fullPath.c_str(), "wb");
++            if (!f) {
++                unzCloseCurrentFile(zipfile);
++                unzClose(zipfile);
++                ELOG("Failed to create file for writing");
++                return false;
++            }
++            char buffer[2 * FILENAME_MAX];
++            int bytesRead;
++            while ((bytesRead = unzReadCurrentFile(zipfile, buffer, sizeof(buffer))) > 0) {
++                fwrite(buffer, 1, bytesRead, f);
++            }
++            fclose(f);
++            unzCloseCurrentFile(zipfile);
++        }
++    } while (unzGoToNextFile(zipfile) == UNZ_OK);
++    unzClose(zipfile);
++    return SetupPandaClassPath(destDir);
++}
+diff --git a/ide/tools/previewer/util/Unhap.h b/ide/tools/previewer/util/Unhap.h
+new file mode 100755
+index 0000000..4ddc228
+--- /dev/null
++++ b/ide/tools/previewer/util/Unhap.h
+@@ -0,0 +1,23 @@
++/*
++ * Copyright (c) 2024 Huawei Device Co., Ltd.
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef __PREVIEWER__UTIL__UNHAP_H__
++#define __PREVIEWER__UTIL__UNHAP_H__
++
++#include <string>
++
++bool Unhap(const std::string &hapPath, const std::string &destDir);
++
++#endif // __PREVIEWER__UTIL__UNHAP_H__

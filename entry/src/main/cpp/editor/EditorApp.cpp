@@ -39,14 +39,14 @@ void EditorApp::CreateSampleTree() {
     ArkUI_AttributeItem pctHItem = {&pctH, 1};
     nodeApi->setAttribute(rootCol, NODE_HEIGHT_PERCENT, &pctHItem);
 
-    ArkUI_NumberValue bgVal = {.u32 = 0xFFF5F5F5};
+    ArkUI_NumberValue bgVal = {.u32 = 0xFF484848};
     ArkUI_AttributeItem bgItem = {&bgVal, 1};
     nodeApi->setAttribute(rootCol, NODE_BACKGROUND_COLOR, &bgItem);
-
+    
     ArkUI_NumberValue justifyVal = {.i32 = ARKUI_FLEX_ALIGNMENT_CENTER};
     ArkUI_AttributeItem justifyItem = {&justifyVal, 1};
     nodeApi->setAttribute(rootCol, NODE_COLUMN_JUSTIFY_CONTENT, &justifyItem);
-
+    
     ArkUI_NumberValue alignVal = {.i32 = ARKUI_HORIZONTAL_ALIGNMENT_CENTER};
     ArkUI_AttributeItem alignItem = {&alignVal, 1};
     nodeApi->setAttribute(rootCol, NODE_COLUMN_ALIGN_ITEMS, &alignItem);
@@ -54,7 +54,7 @@ void EditorApp::CreateSampleTree() {
     ArkUI_NumberValue padVal = {.f32 = 20.0f};
     ArkUI_AttributeItem padItem = {&padVal, 1};
     nodeApi->setAttribute(rootCol, NODE_PADDING, &padItem);
-
+    
     ArkUI_NodeHandle textNode = nodeApi->createNode(ARKUI_NODE_TEXT);
     if (textNode) {
         ArkUI_AttributeItem contentItem = {nullptr, 0, "Hello from ArkUI NDK!", nullptr};
@@ -108,6 +108,7 @@ void EditorApp::CreateSampleTree() {
         nodeApi->addChild(rootCol, btnNode);
         OH_LOG_INFO(LOG_APP, "Button node added");
     }
+
 
     OH_ArkUI_NodeContent_AddNode(contentHandle_, rootCol);
 
