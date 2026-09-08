@@ -1,0 +1,53 @@
+{
+    "MaterialName": "ThanosSnapFast",
+    "Uniform": [
+        {
+            "name": "iResolution",
+            "type": "vec2",
+            "val": [
+                1280.0,
+                720.0
+            ]
+        },
+        {
+            "name": "dustTex",
+            "type": "texture",
+            "val": ""
+        },
+        {
+            "name": "inputTex",
+            "type": "texture",
+            "val": ""
+        },
+        {
+            "name": "inputTexMat",
+            "type": "mat3",
+            "val": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ]
+        },
+        {
+            "name": "dissolveMap",
+            "type": "texture",
+            "val": ""
+        },
+        {
+            "name": "lumaBias",
+            "type": "float",
+            "val": 0.0
+        },
+        {
+            "name": "edgeGlow",
+            "type": "float",
+            "val": 1.2
+        }
+    ]
+}
