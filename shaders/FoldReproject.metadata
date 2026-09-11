@@ -1,0 +1,86 @@
+{
+    "MaterialName": "FoldReproject",
+    "Uniform": [
+        {
+            "name": "iResolution",
+            "type": "vec2",
+            "val": [
+                1280.0,
+                720.0
+            ]
+        },
+        {
+            "name": "inputTex",
+            "type": "texture",
+            "val": ""
+        },
+        {
+            "name": "inputTexMat",
+            "type": "mat3",
+            "val": [
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ]
+        },
+        {
+            "name": "angleDeg",
+            "type": "float",
+            "val": 0.0
+        },
+        {
+            "name": "dpi",
+            "type": "float",
+            "val": 460.0
+        },
+        {
+            "name": "resolution",
+            "type": "vec2",
+            "val": [
+                1179.0,
+                2532.0
+            ]
+        },
+        {
+            "name": "viewDist",
+            "type": "float",
+            "val": 14.0
+        },
+        {
+            "name": "eyeOffsetX",
+            "type": "float",
+            "val": 0.0
+        },
+        {
+            "name": "uvRect",
+            "type": "vec4",
+            "val": [
+                0.0,
+                0.0,
+                1.0,
+                1.0
+            ]
+        },
+        {
+            "name": "brightnessComp",
+            "type": "float",
+            "val": 1.0
+        },
+        {
+            "name": "edgeFade",
+            "type": "float",
+            "val": 1.0
+        },
+        {
+            "name": "smoothStretch",
+            "type": "float",
+            "val": 1.0
+        }
+    ]
+}
