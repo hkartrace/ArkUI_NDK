@@ -1,0 +1,19 @@
+import { BusinessError } from '@kit.BasicServicesKit';
+
+// inside onWindowStageCreate, before loadContent:
+try {
+  const mainWindow = windowStage.getMainWindowSync();
+  // 1. draw content under the status bar (removes the reserved strip)
+  mainWindow.setWindowLayoutFullScreen(true).catch((err: BusinessError) => {
+    hilog.error(DOMAIN, 'testTag', 'setWindowLayoutFullScreen failed: %{public}s', JSON.stringify(err));
+  });
+  // 2. make the bar itself transparent so the green/native content shows through
+  mainWindow.setWindowSystemBarProperties({
+    statusBarColor: '#00000000',
+    isStatusBarLightIcon: true // white icons/text — set false if your native content is light
+  }).catch((err: BusinessError) => {
+    hilog.error(DOMAIN, 'testTag', 'setWindowSystemBarProperties failed: %{public}s', JSON.stringify(err));
+  });
+} catch (err) {
+  hilog.error(DOMAIN, 'testTag', 'Failed to configure window: %{public}s', JSON.stringify(err));
+}
