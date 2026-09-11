@@ -1,0 +1,13 @@
+using namespace OHOS::Rosen;
+using namespace OHOS::Rosen::Drawing;
+
+// inside your filter's OnProcessImage(canvas, image, src, dst):
+GELinearGradientShaderMaskParams maskParams;
+maskParams.fractionStops = { {0.0f, 0.0f}, {1.0f, 1.0f} };        // (alpha, stop): 0 left -> 1 right
+maskParams.startPosition = Drawing::Point(0, image->GetHeight() * 0.5f);
+maskParams.endPosition   = Drawing::Point(image->GetWidth(), image->GetHeight() * 0.5f);
+auto mask = std::make_shared<Drawing::GELinearGradientShaderMask>(maskParams);
+
+GEVariableRadiusBlurShaderFilterParams p{ mask, 60.0f };            // {mask, blurRadius, applyInsideMask=false}
+GEVariableRadiusBlurShaderFilter blur(p);
+auto blurred = blur.ProcessImage(canvas, image, src, dst);          // feed result to the rest of your filter
