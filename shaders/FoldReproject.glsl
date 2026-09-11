@@ -1,7 +1,7 @@
 #version 320 es
 // @author AuroraGraph
 // @category Distortion
-// @description Rotation compensation for a hinged display panel (hinge on the left edge). The panel content is reprojected so a viewer looking straight at the panel's unfolded virtual position sees the texture undistorted, as if the screen were transparent and never rotated. At angleDeg 0 the output is an exact passthrough. Set resolution and dpi to the physical panel, viewDist to the eye distance in inches.
+// @description Rotation compensation for a hinged display panel (hinge on the left edge by default, or the right edge with hingeSide = 1). The panel content is reprojected so a viewer looking straight at the panel's unfolded virtual position sees the texture undistorted, as if the screen were transparent and never rotated. At angleDeg 0 the output is an exact passthrough. Set resolution and dpi to the physical panel, viewDist to the eye distance in inches. Alpha carries a displacement mask: 0 at the hinge, approaching 1 where the projection lands far from the panel.
 // @revision 2026-09-10 00:00:00
 
 precision highp float;
@@ -14,6 +14,7 @@ uniform mat3 inputTexMat; // @imagemat
 uniform vec2 iResolution;
 
 uniform float angleDeg; // Panel rotation around the hinge in degrees @minmax{ 0.0, 180.0 } @init { 0.0 }
+uniform float hingeSide; // Hinge side: 0 = left edge, 1 = right edge @minmax{ 0.0, 1.0 } @init { 0.0 }
 uniform float dpi; // Panel pixels per inch @minmax{ 50.0, 1000.0 } @init { 460.0 }
 uniform vec2 resolution; // Physical panel resolution in pixels
 uniform float viewDist; // Eye distance from the virtual plane in inches @minmax{ 4.0, 60.0 } @init { 14.0 }
@@ -39,8 +40,11 @@ void main()
     float W = resolution.x / dpi;
     float H = resolution.y / dpi;
 
-    // panel-local physical coordinates, hinge along x = 0 (left edge)
-    float xp = uv.x * W;
+    // panel-local physical coordinates; xp = distance from the hinge
+    float hingeRight = step(0.5, hingeSide);
+    float hingeX = hingeRight * W; // hinge at x = 0 (left) or x = W (right)
+    float hingeSign = 1.0 - 2.0 * hingeRight; // +1 left, -1 right
+    float xp = mix(uv.x, 1.0 - uv.x, hingeRight) * W;
     float yp = uv.y * H;
 
     float th = radians(clamp(angleDeg, 0.0, 180.0));
@@ -48,7 +52,7 @@ void main()
     float cs = cos(th);
 
     // rotated physical position of this panel pixel
-    vec3 P = vec3(xp * cs, yp, xp * sn);
+    vec3 P = vec3(hingeX + hingeSign * xp * cs, yp, xp * sn);
 
     // eye: straight-on to the virtual (unfolded) panel position
     float D = viewDist;
@@ -73,7 +77,7 @@ void main()
 
     // analytic jacobian of the projection (virtual area per panel area)
     float dtdxp = sn * t * t / D;
-    float dVxdxp = t * cs + (P.x - E.x) * dtdxp;
+    float dVxdxp = hingeSign * t * cs + (P.x - E.x) * dtdxp;
     float dVydxp = (P.y - E.y) * dtdxp;
     float dVydyp = t;
     float J = abs(dVxdxp * dVydyp);
@@ -108,6 +112,11 @@ void main()
         col = texture(inputTex, (vec3(tuv * texSize, 1.0) * inMat).xy).rgb;
     }
 
+    // displacement mask: 0 at the hinge, ~1 when the projection is far from
+    // the panel's own position (saturates across the panel near angleDeg 90)
+    float disp = length(vuv - uv);
+    float mask = smoothstep(0.0, 1.0, disp);
+
     col *= scale * fade;
-    out_color = vec4(col, 1.0);
+    out_color = vec4(col, mask);
 }

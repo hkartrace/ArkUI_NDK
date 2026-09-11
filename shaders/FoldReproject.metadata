@@ -35,6 +35,11 @@
             "val": 0.0
         },
         {
+            "name": "hingeSide",
+            "type": "float",
+            "val": 0.0
+        },
+        {
             "name": "dpi",
             "type": "float",
             "val": 460.0
