@@ -1,0 +1,48 @@
+import { display } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+
+const TAG = 'FoldAngle';
+const DOMAIN = 0x0001;
+
+function statusName(s: display.FoldStatus): string {
+  return `${s} (FOLD_STATUS_${
+    s === display.FoldStatus.FOLD_STATUS_EXPANDED ? 'EXPANDED' :
+    s === display.FoldStatus.FOLD_STATUS_FOLDED ? 'FOLDED' :
+    s === display.FoldStatus.FOLD_STATUS_HALF_FOLDED ? 'HALF_FOLDED' :
+    s === display.FoldStatus.FOLD_STATUS_UNKNOWN ? 'UNKNOWN' : 'DUAL_DISPLAY'})`;
+}
+
+@Entry
+@Component
+struct FoldAnglePage {
+  private onAngle = (angles: Array<number>): void => {
+    // angles[0] = the single hinge of the Mate X7, in degrees (0 = folded, 180 = flat)
+    hilog.info(DOMAIN, TAG, `Hinge angle: ${angles.map(a => `${Math.round(a)}°`).join(', ')}`);
+  };
+
+  private onStatus = (status: display.FoldStatus): void => {
+    hilog.info(DOMAIN, TAG, `Fold status: ${statusName(status)}`);
+  };
+
+  aboutToAppear(): void {
+    if (!display.isFoldable()) {
+      hilog.warn(DOMAIN, TAG, 'Device is not foldable - angle events will not fire');
+      return;
+    }
+    hilog.info(DOMAIN, TAG, `Current fold status: ${statusName(display.getFoldStatus())}`);
+    display.on('foldAngleChange', this.onAngle);
+    display.on('foldStatusChange', this.onStatus);
+  }
+
+  aboutToDisappear(): void {
+    display.off('foldAngleChange', this.onAngle);
+    display.off('foldStatusChange', this.onStatus);
+  }
+
+  build() {
+    Column() {
+      Text('Logging hinge angle - check hilog tag "FoldAngle"')
+        .fontSize(16).textAlign(TextAlign.Center).padding(20)
+    }.width('100%').height('100%').justifyContent(FlexAlign.Center)
+  }
+}
