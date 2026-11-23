@@ -1,0 +1,18 @@
+App build command (assembled by backend /api/app/compile; NO hardcoded
+paths - every location is resolved at launch, see backend\paths.js):
+
+  cd /d "<hapDir>" && "<deveco node>" "<deveco hvigorw>" --mode module -p product=default assembleHap --analyze=normal --parallel --incremental --daemon
+
+Resolution (logged at backend launch, exposed at /api/health -> paths):
+  hapDir      AURORA_HAP_DIR env > config hapDir (%LOCALAPPDATA%\AuroraGraph
+              \config.json) > sibling ..\ohos\hap
+  deveco home AURORA_DEVECO env > config devecoHome > DEVECO_SDK_HOME env >
+              auto-detect (machine-wide/per-user install dirs, registry, PATH)
+  node        <deveco home>\tools\node\node.exe (DevEco-bundled pairing;
+              hvigorw's npm bootstrap breaks under other node versions)
+  java        JAVA_HOME env > <deveco home>\jbr\bin (hap packaging spawns java)
+  DEVECO_SDK_HOME is exported to the build child from the resolved sdk home.
+
+Prerequisite: the AG SDK typing patch must be applied to the on-disk SDK
+(ohos\hap\sdk-patches\@ohos.graphics.uiEffect.d.ts - see its README). The
+backend WARNS at launch when it is missing.
